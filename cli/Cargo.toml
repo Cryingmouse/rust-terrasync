@@ -9,6 +9,7 @@ edition = "2021"
 utils = { path = "../utils" }
 app = { path = "../app" }
 log = "0.4.21"
+env_logger = "0.11.5"
 
 [dependencies.clap]
 version = "4.5.37"

@@ -1,81 +1,78 @@
-use std::path::PathBuf;
-use clap::{Parser, Subcommand, CommandFactory};
+use clap::{Parser, Subcommand};
 
 mod commands;
 
-use utils::app_config::AppConfig;
-use utils::error::Result;
-use utils::types::LogLevel;
-
-
-#[derive(Parser, Debug)]
-#[command(
-    name = "rust-terrasync",
-    author,
-    about,
-    long_about = "Rust Terrasync CLI",
-    version
-)]
-//TODO: #[clap(setting = AppSettings::SubcommandRequired)]
-//TODO: #[clap(global_setting(AppSettings::DeriveDisplayOrder))]
+#[derive(Parser)]
+#[command(name = "rust-terrasync")]
+#[command(about = "A Rust-based terrasync application", long_about = None)]
 pub struct Cli {
-    /// Set a custom config file
-    /// TODO: parse(from_os_str)
-    #[arg(short, long, value_name = "FILE")]
-    pub config: Option<PathBuf>,
-
-    /// Set a custom config file
-    #[arg(name="debug", short, long="debug", value_name = "DEBUG")]
-    pub debug: Option<bool>,
-
-    /// Set Log Level 
-    #[arg(name="log_level", short, long="log-level", value_name = "LOG_LEVEL")]
-    pub log_level: Option<LogLevel>,
-
-    /// Subcommands
-    #[clap(subcommand)]
-    command: Commands,
+    #[command(subcommand)]
+    pub command: Commands,
 }
 
 #[derive(Subcommand, Debug)]
-enum Commands {
-    #[clap(
-        name = "scan",
-        about = "Perform a scan operation",
-        long_about = None, 
-    )]
-    Scan,
-    #[clap(
-        name = "sync",
-        about = "Perform a sync operation",
-        long_about = None, 
-    )]
-    Sync,
-    #[clap(
-        name = "config",
-        about = "Show Configuration",
-        long_about = None,
-    )]
-    Config,
+pub enum Commands {
+    /// Run the sync operation
+    Sync {
+        /// Enable verbose logging
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Configuration file path
+        #[arg(short, long)]
+        config: Option<String>,
+    },
+
+    /// Run the scan operation
+    Scan {
+        /// Scan ID for tracking
+        #[arg(short, long)]
+        id: Option<String>,
+
+        /// Scan depth level
+        #[arg(short, long, default_value = "1")]
+        depth: u32,
+
+        /// Directory path to scan
+        #[arg(default_value = ".")]
+        path: String,
+
+        /// Filter expression to match files/directories
+        /// Examples: 'modified<0.5 and "ntap" in name and type==file'
+        #[arg(short, long, value_name = "EXPRESSION")]
+        r#match: Vec<String>,
+
+        /// Filter expression to exclude files/directories
+        /// Examples: 'name=="target" or name==".git"'
+        #[arg(short, long, value_name = "EXPRESSION")]
+        exclude: Vec<String>,
+    },
 }
 
-pub fn cli_match() -> Result<()> {
+pub async fn cli_match() -> utils::error::Result<()> {
     // Parse the command line arguments
     let cli = Cli::parse();
 
-    // Merge clap config file if the value is set
-    AppConfig::merge_config(cli.config.as_deref())?;
-
-    let app = Cli::command();
-    let matches = app.get_matches();
-    
-    AppConfig::merge_args(matches)?;
-
     // Execute the subcommand
     match &cli.command {
-        Commands::Scan => commands::scan()?,        
-        Commands::Sync => commands::sync()?,        
-        Commands::Config => commands::config()?,    }
+        Commands::Scan {
+            id,
+            depth,
+            path,
+            r#match,
+            exclude,
+        } => {
+            commands::scan_cmd(
+                id.clone(),
+                *depth,
+                path.clone(),
+                r#match.clone(),
+                exclude.clone(),
+            )
+            .await?
+        }
+        Commands::Sync { verbose, config } => commands::sync_cmd(*verbose, config.clone()).await?,
+    }
 
     Ok(())
 }

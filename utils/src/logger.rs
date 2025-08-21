@@ -1,5 +1,7 @@
 use slog::o;
 use slog::Drain;
+use slog::Level;
+use slog::LevelFilter;
 #[cfg(all(target_os = "linux", feature = "journald"))]
 use slog_journald::JournaldDrain;
 #[cfg(feature = "syslog")]
@@ -8,6 +10,7 @@ use slog_syslog::Facility;
 use std::fs::OpenOptions;
 
 use super::error::Result;
+use crate::app_config::AppConfig;
 
 pub fn setup_logging() -> Result<slog_scope::GlobalLoggerGuard> {
     // Setup Logging
@@ -18,6 +21,9 @@ pub fn setup_logging() -> Result<slog_scope::GlobalLoggerGuard> {
 }
 
 pub fn default_root_logger() -> Result<slog::Logger> {
+    // 从配置中获取日志级别
+    let log_level = get_log_level_from_config();
+
     // Create terminal drain for stdout output
     let term_drain = default_term_drain().unwrap_or(default_discard()?);
     
@@ -38,6 +44,9 @@ pub fn default_root_logger() -> Result<slog::Logger> {
     )
     .fuse();
 
+    // 应用日志级别过滤器
+    let drain = LevelFilter::new(drain, log_level).fuse();
+
     // Create Logger
     let logger = slog::Logger::root(drain, o!());
 
@@ -45,8 +54,37 @@ pub fn default_root_logger() -> Result<slog::Logger> {
     Ok(logger)
 }
 
+/// 从配置中获取日志级别
+fn get_log_level_from_config() -> Level {
+    // 在测试环境中，配置可能未初始化，使用默认值
+    #[cfg(test)]
+    {
+        return Level::Info;
+    }
+    
+    // 在生产环境中使用实际配置
+    #[cfg(not(test))]
+    {
+        // 尝试从AppConfig获取日志级别
+        if let Ok(config) = AppConfig::get::<crate::app_config::LogConfig>("log") {
+            match config.level.as_str() {
+                "debug" => Level::Debug,
+                "info" => Level::Info,
+                "warn" => Level::Warning,
+                "error" => Level::Error,
+                _ => Level::Info,
+            }
+        } else {
+            // 如果无法获取配置，使用默认级别
+            Level::Info
+        }
+    }
+}
+
 fn default_discard() -> Result<slog_async::Async> {
-    let drain = slog_async::Async::default(slog::Discard);
+    let drain = slog_async::Async::new(slog::Discard)
+        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .build();
 
     Ok(drain)
 }
@@ -59,7 +97,9 @@ fn default_term_drain() -> Result<slog_async::Async> {
         .use_file_location()  // 添加文件路径和行号
         .use_custom_timestamp(slog_term::timestamp_local);
 
-    let drain = slog_async::Async::default(term.build().fuse());
+    let drain = slog_async::Async::new(term.build().fuse())
+        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .build();
 
     Ok(drain)
 }
@@ -72,7 +112,9 @@ fn default_term_drain() -> Result<slog_async::Async> {
         .use_file_location()  // 添加文件路径和行号
         .use_custom_timestamp(slog_term::timestamp_local);
 
-    let drain = slog_async::Async::default(term.build().fuse());
+    let drain = slog_async::Async::new(term.build().fuse())
+        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .build();
 
     Ok(drain)
 }
@@ -110,7 +152,9 @@ fn default_file_drain() -> Result<slog_async::Async> {
         .build()
         .fuse();
     
-    let drain = slog_async::Async::default(formatter);
+    let drain = slog_async::Async::new(formatter)
+        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .build();
     
     Ok(drain)
 }
@@ -120,7 +164,9 @@ fn default_file_drain() -> Result<slog_async::Async> {
 fn default_syslog_drain() -> Result<slog_async::Async> {
     let syslog = slog_syslog::unix_3164(Facility::LOG_USER)?;
 
-    let drain = slog_async::Async::default(syslog.fuse());
+    let drain = slog_async::Async::new(syslog.fuse())
+        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .build();
 
     Ok(drain)
 }
@@ -128,7 +174,9 @@ fn default_syslog_drain() -> Result<slog_async::Async> {
 #[cfg(all(target_os = "linux", feature = "journald"))]
 fn default_journald_drain() -> Result<slog_async::Async> {
     let journald = JournaldDrain.ignore_res();
-    let drain = slog_async::Async::default(journald);
+    let drain = slog_async::Async::new(journald)
+        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .build();
 
     Ok(drain)
 }

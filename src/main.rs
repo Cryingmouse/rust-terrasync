@@ -8,7 +8,8 @@ use utils::app_config::AppConfig;
 use utils::error::Result;
 
 /// The main entry point of the application.
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     // Human Panic. Only enabled when *not* debugging.
     #[cfg(not(debug_assertions))]
     {
@@ -32,7 +33,7 @@ fn main() -> Result<()> {
     AppConfig::init(Some(config_contents))?;
 
     // Match Commands
-    cli::cli_match()?;
+    cli::cli_match().await?;
 
     Ok(())
 }

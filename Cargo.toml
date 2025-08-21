@@ -12,7 +12,7 @@ Rust Starter aims to provide high quality components to bootstrap your Rust CLI 
 """
 
 [workspace]
-members = ["utils", "cli", "app"]
+members = ["utils", "cli", "app", "storage"]
 
 [features]
 nightly = ["utils/nightly"]
@@ -29,6 +29,7 @@ better-panic = "0.3.0"
 log = "0.4.27"
 slog = "2.7.0"
 slog-scope = "4.4.0"
+tokio = { version = "1.0", features = ["full"] }
 
 [dev-dependencies]
 assert_cmd = "2.0.17"

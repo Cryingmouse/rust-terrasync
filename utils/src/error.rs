@@ -107,3 +107,14 @@ impl From<log::SetLoggerError> for Error {
         }
     }
 }
+
+impl From<String> for Error {
+    fn from(err: String) -> Self {
+        Error {
+            msg: err,
+            #[cfg(feature = "nightly")]
+            backtrace: std::backtrace::Backtrace::capture(),
+            source: None,
+        }
+    }
+}

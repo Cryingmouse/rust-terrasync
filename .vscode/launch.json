@@ -1,0 +1,50 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug rust-terrasync",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rust-terrasync",
+                    "--package=rust-terrasync"
+                ],
+                "filter": {
+                    "name": "rust-terrasync",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "scan",
+                "."
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug CLI scan",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=rust-terrasync"
+                ],
+                "filter": {
+                    "name": "rust-terrasync",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "scan",
+                "--depth",
+                "2",
+                "--match",
+                "*.rs"
+            ],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

@@ -1,34 +1,30 @@
-use app::scan;
-use app::sync;
-
+use app::scan::{scan, ScanParams};
 use utils::app_config::AppConfig;
-use utils::error::Result;
 
-/// Perform a scan operation
-pub fn scan() -> Result<()> {
-    // Log this sync operation
-    log::info!("Performing scan operation");
+pub async fn scan_cmd(
+    id: Option<String>, depth: u32, path: String, r#match: Vec<String>, exclude: Vec<String>,
+) -> utils::error::Result<()> {
+    let params = ScanParams {
+        id,
+        depth,
+        path,
+        match_expressions: r#match,
+        exclude_expressions: exclude,
+    };
 
-    scan::scan()?;
-
+    scan(params).await?;
     Ok(())
 }
 
-/// Show the configuration file
-pub fn config() -> Result<()> {
-    let config = AppConfig::fetch()?;
-    println!("{:#?}", config);
+pub async fn sync_cmd(verbose: bool, _config: Option<String>) -> utils::error::Result<()> {
+    if verbose {
+        std::env::set_var("RUST_LOG", "debug");
+    }
 
-    Ok(())
-}
+    let _config = AppConfig::fetch()?;
+    log::info!("Starting sync operation...");
 
-/// Perform a sync operation
-pub fn sync() -> Result<()> {
-    // Log this sync operation
-    log::info!("Performing sync operation");
-
-    // Perform sync
-    sync::sync()?;
-
+    // TODO: 实现同步逻辑
+    log::info!("Sync operation completed");
     Ok(())
 }
