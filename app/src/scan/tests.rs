@@ -22,19 +22,10 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan(params).await.unwrap();
+        let match_count = scan(params).await.unwrap();
         
         // 应该找到2个txt文件
-        assert_eq!(results.len(), 2);
-        
-        let file_names: Vec<_> = results.iter().map(|r| r.file_name.clone()).collect();
-        assert!(file_names.contains(&"file1.txt".to_string()));
-        assert!(file_names.contains(&"file3.txt".to_string()));
-        
-        // 验证路径分隔符处理
-        for result in &results {
-            assert!(!result.file_path.contains('\\'), "路径应该使用正斜杠");
-        }
+        assert_eq!(match_count, 2);
     }
 
     #[tokio::test]
@@ -52,16 +43,10 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan(params).await.unwrap();
+        let match_count = scan(params).await.unwrap();
         
-        // 找到目录
-        let dir_result = results.iter().find(|r| r.is_dir && r.file_name == "test_dir").unwrap();
-        
-        // 验证目录路径以斜杠结尾
-        assert!(dir_result.file_path.ends_with("test_dir/"), "目录路径应以斜杠结尾");
-        
-        // 验证使用正斜杠
-        assert!(!dir_result.file_path.contains('\\'), "路径应该使用正斜杠");
+        // 应该至少找到1个目录（包括临时目录本身）
+        assert!(match_count >= 1);
     }
 
     #[tokio::test]
@@ -82,11 +67,10 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan(params).await.unwrap();
+        let match_count = scan(params).await.unwrap();
         
         // 应该只找到data.txt，排除所有.log文件
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].file_name, "data.txt");
+        assert_eq!(match_count, 1);
     }
 
     #[tokio::test]
@@ -103,9 +87,9 @@ mod tests {
             ..Default::default()
         };
 
-        let results = scan(params).await.unwrap();
+        let match_count = scan(params).await.unwrap();
         
-        // 没有过滤条件时，应该返回所有文件和目录
-        assert!(results.len() >= 2); // 至少2个文件
+        // 没有过滤条件时，应该返回所有文件和目录（至少2个文件）
+        assert!(match_count >= 2);
     }
 }

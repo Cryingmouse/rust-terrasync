@@ -1,3 +1,4 @@
+use crate::acl::{get_file_acl, FileAclInfo};
 use std::fs::Metadata;
 use std::io;
 use std::io::SeekFrom;
@@ -19,6 +20,7 @@ pub struct FileObject {
     info: Metadata,
     path: PathBuf,
     name: String,
+    acl_info: Option<FileAclInfo>,
 }
 
 /// Async section reader for efficient file reading
@@ -98,6 +100,27 @@ impl FileObject {
         self.info.is_file()
     }
 
+    /// Get file ACL information
+    pub fn acl_info(&self) -> Option<&FileAclInfo> {
+        self.acl_info.as_ref()
+    }
+
+    /// Get file owner from ACL
+    pub fn owner(&self) -> String {
+        self.acl_info
+            .as_ref()
+            .map(|acl| acl.owner.clone())
+            .unwrap_or_else(|| "Unknown".to_string())
+    }
+
+    /// Get file group from ACL
+    pub fn group(&self) -> String {
+        self.acl_info
+            .as_ref()
+            .map(|acl| acl.group.clone())
+            .unwrap_or_else(|| "Unknown".to_string())
+    }
+
     /// Delete the file/directory asynchronously
     pub async fn delete(&self) -> io::Result<()> {
         match tokio_fs::remove_file(&self.path).await {
@@ -111,11 +134,6 @@ impl FileObject {
                 }
             }),
         }
-    }
-
-    /// Get full file system path
-    pub fn full_path(&self) -> PathBuf {
-        self.path.clone()
     }
 
     /// Get file content asynchronously with offset and limit
@@ -174,8 +192,8 @@ impl LocalStorage {
         PathBuf::from(&self.root).join(key)
     }
 
-    /// 使用walkdir的流式版本 - 通过队列返回entry作为生产者
-    pub async fn walkdir(path: PathBuf) -> tokio::sync::mpsc::Receiver<walkdir::DirEntry> {
+    /// 使用walkdir的流式版本 - 通过队列返回FileObject作为生产者
+    pub async fn walkdir(path: PathBuf) -> tokio::sync::mpsc::Receiver<FileObject> {
         use walkdir::WalkDir;
         let (tx, rx) = tokio::sync::mpsc::channel(1000); // 缓冲区大小1000
 
@@ -185,9 +203,27 @@ impl LocalStorage {
                 .max_open(100); // 限制同时打开的文件句柄数
 
             for entry in walker.into_iter().filter_map(|e| e.ok()) {
-                if let Err(_) = tx.blocking_send(entry) {
-                    // 如果接收端已关闭，退出循环
-                    break;
+                let path = entry.path().to_path_buf();
+                let name = entry.file_name().to_string_lossy().into_owned();
+
+                match entry.metadata() {
+                    Ok(info) => {
+                        // 获取ACL信息
+                        let acl_info = get_file_acl(&path).ok();
+
+                        let file_object = FileObject {
+                            info,
+                            path,
+                            name,
+                            acl_info,
+                        };
+
+                        if let Err(_) = tx.blocking_send(file_object) {
+                            // 如果接收端已关闭，退出循环
+                            break;
+                        }
+                    }
+                    Err(_) => continue, // 跳过无法获取元数据的文件
                 }
             }
         });
@@ -206,10 +242,17 @@ impl LocalStorage {
             .to_string_lossy()
             .into_owned();
 
+        // 获取ACL信息（异步获取可能会阻塞，使用spawn_blocking）
+        let path_clone = path.clone();
+        let acl_info = tokio::task::spawn_blocking(move || get_file_acl(&path_clone).ok())
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
         Ok(FileObject {
             info: metadata,
             path,
             name,
+            acl_info,
         })
     }
 
@@ -305,10 +348,17 @@ impl LocalStorage {
             .to_string_lossy()
             .into_owned();
 
+        // 获取ACL信息
+        let path_clone = path.clone();
+        let acl_info = tokio::task::spawn_blocking(move || get_file_acl(&path_clone).ok())
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+
         Ok(FileObject {
             info: metadata,
             path,
             name,
+            acl_info,
         })
     }
 
