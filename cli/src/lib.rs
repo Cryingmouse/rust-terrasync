@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use clap::{Parser, Subcommand, CommandFactory};
-use clap_complete::{generate, shells::{Bash, Fish, Zsh}};
 
-use core::commands;
+mod commands;
+
 use utils::app_config::AppConfig;
 use utils::error::Result;
 use utils::types::LogLevel;
@@ -10,10 +10,10 @@ use utils::types::LogLevel;
 
 #[derive(Parser, Debug)]
 #[command(
-    name = "rust-starter",
+    name = "rust-terrasync",
     author,
     about,
-    long_about = "Rust Starter CLI",
+    long_about = "Rust Terrasync CLI",
     version
 )]
 //TODO: #[clap(setting = AppSettings::SubcommandRequired)]
@@ -40,42 +40,23 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 enum Commands {
     #[clap(
-        name = "hazard",
-        about = "Generate a hazardous occurance",
+        name = "scan",
+        about = "Perform a scan operation",
         long_about = None, 
     )]
-    Hazard,
+    Scan,
     #[clap(
-        name = "error",
-        about = "Simulate an error",
+        name = "sync",
+        about = "Perform a sync operation",
         long_about = None, 
     )]
-    Error,
-    #[clap(
-        name = "completion",
-        about = "Generate completion scripts",
-        long_about = None,
-        )]
-        Completion {
-            #[clap(subcommand)]
-            subcommand: CompletionSubcommand,
-        },
+    Sync,
     #[clap(
         name = "config",
         about = "Show Configuration",
         long_about = None,
     )]
     Config,
-}
-
-#[derive(Subcommand, PartialEq, Debug)]
-enum CompletionSubcommand {
-    #[clap(about = "generate the autocompletion script for bash")]
-    Bash,
-    #[clap(about = "generate the autocompletion script for zsh")]
-    Zsh,
-    #[clap(about = "generate the autocompletion script for fish")]
-    Fish,
 }
 
 pub fn cli_match() -> Result<()> {
@@ -92,24 +73,9 @@ pub fn cli_match() -> Result<()> {
 
     // Execute the subcommand
     match &cli.command {
-        Commands::Hazard => commands::hazard()?,
-        Commands::Error => commands::simulate_error()?,
-        Commands::Completion {subcommand} => {
-            let mut app = Cli::command();
-            match subcommand {
-                CompletionSubcommand::Bash => {
-                    generate(Bash, &mut app, "rust-starter", &mut std::io::stdout());
-                }
-                CompletionSubcommand::Zsh => {
-                    generate(Zsh, &mut app, "rust-starter", &mut std::io::stdout());
-                }
-                CompletionSubcommand::Fish => {
-                    generate(Fish, &mut app, "rust-starter", &mut std::io::stdout());
-                }
-            }
-        }
-        Commands::Config => commands::config()?,
-    }
+        Commands::Scan => commands::scan()?,        
+        Commands::Sync => commands::sync()?,        
+        Commands::Config => commands::config()?,    }
 
     Ok(())
 }

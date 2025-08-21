@@ -15,16 +15,54 @@ lazy_static! {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Database {
-    pub url: String,
-    pub variable: String,
+pub struct LogConfig {
+    pub max_size: u64,
+    pub max_backups: u32,
+    pub level: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ScanConfig {
+    pub concurrency: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MigrateConfig {
+    pub overwrite: bool,
+    pub concurrency: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DatabaseClickhouse {
+    pub dsn: String,
+    pub dial_timeout: u32,
+    pub read_timeout: u32,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DatabaseConfig {
+    pub enabled: bool,
+    pub r#type: String,
+    pub batch_size: u32,
+    pub clickhouse: DatabaseClickhouse,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct KafkaConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u32,
+    pub topic: String,
+    pub concurrency: u32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppConfig {
-    pub debug: bool,
-    pub log_level: LogLevel,
-    pub database: Database,
+    pub log: LogConfig,
+    pub scan: ScanConfig,
+    pub migrate: MigrateConfig,
+    pub database: DatabaseConfig,
+    pub kafka: KafkaConfig,
 }
 
 impl AppConfig {
@@ -124,9 +162,11 @@ impl TryFrom<Config> for AppConfig {
 
     fn try_from(config: Config) -> Result<Self> {
         Ok(AppConfig {
-            debug: config.get_bool("debug")?,
-            log_level: config.get::<LogLevel>("log_level")?,
-            database: config.get::<Database>("database")?,
+            log: config.get::<LogConfig>("log")?,
+            scan: config.get::<ScanConfig>("scan")?,
+            migrate: config.get::<MigrateConfig>("migrate")?,
+            database: config.get::<DatabaseConfig>("database")?,
+            kafka: config.get::<KafkaConfig>("kafka")?,
         })
     }
 }

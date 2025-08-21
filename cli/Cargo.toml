@@ -2,13 +2,13 @@
 name = "cli"
 version = "2.0.1"
 authors = ["Abid Omar <contact@omarabid.com>"]
-description = "CLI interface for rust-starter"
+description = "CLI interface for rust-terrasync"
 edition = "2021"
 
 [dependencies]
 utils = { path = "../utils" }
-core = { path = "../core" }
-clap_complete = "4.5.50"
+app = { path = "../app" }
+log = "0.4.21"
 
 [dependencies.clap]
 version = "4.5.37"

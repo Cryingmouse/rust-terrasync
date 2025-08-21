@@ -1,5 +1,5 @@
 digraph dependencies {
-	N0[label="rust-starter",shape=diamond,color=green];
+N0[label="rust-terrasync",shape=diamond,color=green];
 	N1[label="memchr",shape=diamond,color=green];
 	N2[label="ansi_term",shape=diamond,color=green];
 	N3[label="winapi",shape=diamond,color=green];

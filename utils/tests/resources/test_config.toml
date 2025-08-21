@@ -1,5 +1,28 @@
-debug = false
-log_level = "info"
+[log]
+max_size = 100
+max_backups = 10
+level = "info"
+
+[scan]
+concurrency = 5
+
+[migrate]
+overwrite = false
+concurrency = 1
+
 [database]
-url = "custom database url"
-variable = "my var"
+enabled = true
+type = "sqlite"
+batch_size = 10000
+
+[database.clickhouse]
+dsn = "tcp://localhost:9000"
+dial_timeout = 5
+read_timeout = 30
+
+[kafka]
+enabled = false
+host = "localhost"
+port = 9092
+topic = "test"
+concurrency = 5

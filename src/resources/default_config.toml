@@ -1,6 +1,29 @@
-debug = false
-log_level = "info"
+[log]
+max_size = 100           # Maximum size in megabytes of the log file before it gets rotated (default: 100)
+max_backups = 10         # Maximum number of old log files to retain (default: 10)
+level = "info"           # Log level: "debug", "info", "warn", "error" (default: "info")
+
+[scan]
+concurrency = 5          # Concurrency threads for scan operation (default: 5)
+
+[migrate]
+overwrite = false        # Force overwrite existing files (default: false)
+concurrency = 1          # Concurrency level for migration operations (default: 5)
 
 [database]
-url = "custom database url"
-variable = "custom variable"
+enabled = true           # Enable Database integration
+type = "clickhouse"      # Database type: "sqlite", "sqlite-memory", "clickhouse"
+batch_size = 200000      # Batch size for file entries. Recommended: 10000 for sqlite, 200000 for clickhouse
+
+[database.clickhouse]
+# ClickHouse specific configuration
+dsn = "tcp://10.131.9.20:9000"  # DSN format: tcp://host:port?database=dbname&user=username&password=password
+dial_timeout = 5
+read_timeout = 30
+
+[kafka]
+enabled = false          # Enable Kafka integration
+host = "10.131.10.10"
+port = 9092
+topic = "scan"
+concurrency = 100        # Concurrency threads for sending messages to kafka (default: 5)

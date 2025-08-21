@@ -1,9 +1,7 @@
-#[macro_use]
 extern crate log;
 
-pub mod commands;
-pub mod error;
-pub mod hazard;
+pub mod sync;
+pub mod scan;
 
 use utils::error::Result;
 
