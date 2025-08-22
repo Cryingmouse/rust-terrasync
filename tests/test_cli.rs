@@ -27,7 +27,7 @@ fn test_scan_exit_code() {
 
 #[test]
 fn test_scan_stdout() {
-    let scan_predicate = predicate::function(|x: &str| x.contains("Walkdir completed"));
+    let scan_predicate = predicate::function(|x: &str| x.contains("Scan Statistics"));
     let mut cmd = Command::cargo_bin("rust-terrasync").expect("Calling binary failed");
     cmd.arg("scan").assert().stdout(scan_predicate);
 }

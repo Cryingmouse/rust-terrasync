@@ -1,4 +1,4 @@
-use crate::acl::{get_file_acl, FileAclInfo};
+// ACL功能已删除，简化代码结构
 use std::fs::Metadata;
 use std::io;
 use std::io::SeekFrom;
@@ -20,13 +20,11 @@ pub struct FileObject {
     info: Metadata,
     path: PathBuf,
     name: String,
-    acl_info: Option<FileAclInfo>,
 }
 
 /// Async section reader for efficient file reading
 pub struct AsyncSectionReader {
     file: tokio_fs::File,
-    offset: u64,
     limit: u64,
     current_pos: u64,
 }
@@ -38,7 +36,6 @@ impl AsyncSectionReader {
 
         Ok(Self {
             file,
-            offset,
             limit,
             current_pos: 0,
         })
@@ -80,6 +77,16 @@ impl FileObject {
         self.info.len()
     }
 
+    /// Get creation time
+    pub fn ctime(&self) -> SystemTime {
+        self.info.created().unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
+    /// Get access time
+    pub fn atime(&self) -> SystemTime {
+        self.info.accessed().unwrap_or(SystemTime::UNIX_EPOCH)
+    }
+
     /// Get modification time
     pub fn mtime(&self) -> SystemTime {
         self.info.modified().unwrap_or(SystemTime::UNIX_EPOCH)
@@ -100,25 +107,17 @@ impl FileObject {
         self.info.is_file()
     }
 
-    /// Get file ACL information
-    pub fn acl_info(&self) -> Option<&FileAclInfo> {
-        self.acl_info.as_ref()
-    }
-
-    /// Get file owner from ACL
-    pub fn owner(&self) -> String {
-        self.acl_info
-            .as_ref()
-            .map(|acl| acl.owner.clone())
-            .unwrap_or_else(|| "Unknown".to_string())
-    }
-
-    /// Get file group from ACL
-    pub fn group(&self) -> String {
-        self.acl_info
-            .as_ref()
-            .map(|acl| acl.group.clone())
-            .unwrap_or_else(|| "Unknown".to_string())
+    /// Get file mode/permissions
+    pub fn mode(&self) -> u32 {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            self.info.permissions().mode()
+        }
+        #[cfg(windows)]
+        {
+            self.info.permissions().readonly() as u32
+        }
     }
 
     /// Delete the file/directory asynchronously
@@ -137,7 +136,7 @@ impl FileObject {
     }
 
     /// Get file content asynchronously with offset and limit
-    pub async fn get_async(&self, offset: u64, limit: u64) -> io::Result<Vec<u8>> {
+    pub async fn get(&self, offset: u64, limit: u64) -> io::Result<Vec<u8>> {
         if self.is_dir() || offset > self.size() || self.size() == 0 {
             return Ok(Vec::new());
         }
@@ -150,34 +149,6 @@ impl FileObject {
         file.read_exact(&mut buffer).await?;
 
         Ok(buffer)
-    }
-
-    /// Get file access time (cross-platform)
-    pub fn atime(&self) -> SystemTime {
-        SystemTime::UNIX_EPOCH // Simplified for cross-platform compatibility
-    }
-
-    /// Get file mode/permissions
-    pub fn mode(&self) -> u32 {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            self.info.permissions().mode()
-        }
-        #[cfg(windows)]
-        {
-            self.info.permissions().readonly() as u32
-        }
-    }
-
-    /// Get file owner UID (cross-platform)
-    pub fn uid(&self) -> u32 {
-        0 // Simplified for cross-platform compatibility
-    }
-
-    /// Get file owner GID (cross-platform)
-    pub fn gid(&self) -> u32 {
-        0 // Simplified for cross-platform compatibility
     }
 }
 
@@ -192,33 +163,29 @@ impl LocalStorage {
         PathBuf::from(&self.root).join(key)
     }
 
-    /// 使用walkdir的流式版本 - 通过队列返回FileObject作为生产者
-    pub async fn walkdir(path: PathBuf) -> tokio::sync::mpsc::Receiver<FileObject> {
+    /// 使用轻量级引用的walkdir版本，减少内存占用
+    pub async fn walkdir_ref(path: PathBuf, depth: Option<usize>) -> tokio::sync::mpsc::Receiver<FileObjectRef> {
         use walkdir::WalkDir;
         let (tx, rx) = tokio::sync::mpsc::channel(1000); // 缓冲区大小1000
 
         tokio::task::spawn_blocking(move || {
-            let walker = WalkDir::new(&path)
+            let mut walker = WalkDir::new(&path)
                 .follow_links(false) // 不跟随符号链接，避免循环
                 .max_open(100); // 限制同时打开的文件句柄数
 
+            // 设置遍历深度
+            if let Some(max_depth) = depth {
+                walker = walker.max_depth(max_depth);
+            }
+
             for entry in walker.into_iter().filter_map(|e| e.ok()) {
                 let path = entry.path().to_path_buf();
-                let name = entry.file_name().to_string_lossy().into_owned();
 
                 match entry.metadata() {
                     Ok(info) => {
-                        // 获取ACL信息
-                        let acl_info = get_file_acl(&path).ok();
+                        let file_ref = FileObjectRef::new(path, &info);
 
-                        let file_object = FileObject {
-                            info,
-                            path,
-                            name,
-                            acl_info,
-                        };
-
-                        if let Err(_) = tx.blocking_send(file_object) {
+                        if let Err(_) = tx.blocking_send(file_ref) {
                             // 如果接收端已关闭，退出循环
                             break;
                         }
@@ -242,17 +209,10 @@ impl LocalStorage {
             .to_string_lossy()
             .into_owned();
 
-        // 获取ACL信息（异步获取可能会阻塞，使用spawn_blocking）
-        let path_clone = path.clone();
-        let acl_info = tokio::task::spawn_blocking(move || get_file_acl(&path_clone).ok())
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
         Ok(FileObject {
             info: metadata,
             path,
             name,
-            acl_info,
         })
     }
 
@@ -348,17 +308,10 @@ impl LocalStorage {
             .to_string_lossy()
             .into_owned();
 
-        // 获取ACL信息
-        let path_clone = path.clone();
-        let acl_info = tokio::task::spawn_blocking(move || get_file_acl(&path_clone).ok())
-            .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-
         Ok(FileObject {
             info: metadata,
             path,
             name,
-            acl_info,
         })
     }
 
@@ -372,5 +325,76 @@ impl LocalStorage {
     pub async fn size(&self, key: &str) -> io::Result<u64> {
         let obj = self.head(key).await?;
         Ok(obj.size())
+    }
+}
+
+/// 轻量级文件对象引用，减少内存占用
+#[derive(Debug)]
+pub struct FileObjectRef {
+    path: PathBuf,
+    name: String,
+    is_dir: bool,
+    is_symlink: bool,
+    size: u64,
+    atime: SystemTime,
+    ctime: SystemTime,
+    mtime: SystemTime,
+}
+
+impl FileObjectRef {
+    /// 从路径和元数据创建轻量级引用
+    pub fn new(path: PathBuf, metadata: &Metadata) -> Self {
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+
+        Self {
+            path,
+            name,
+            is_dir: metadata.is_dir(),
+            is_symlink: metadata.file_type().is_symlink(),
+            size: metadata.len(),
+            atime: metadata.accessed().unwrap_or(SystemTime::UNIX_EPOCH),
+            ctime: metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
+            mtime: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+        }
+    }
+
+    /// 转换为完整的FileObject（按需）
+    pub async fn to_file_object(&self) -> io::Result<FileObject> {
+        let metadata = tokio_fs::metadata(&self.path).await?;
+
+        Ok(FileObject {
+            info: metadata,
+            path: self.path.clone(),
+            name: self.name.clone(),
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn is_dir(&self) -> bool {
+        self.is_dir
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.is_symlink
+    }
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+    pub fn atime(&self) -> SystemTime {
+        self.atime
+    }
+    pub fn ctime(&self) -> SystemTime {
+        self.ctime
+    }
+    pub fn mtime(&self) -> SystemTime {
+        self.mtime
     }
 }

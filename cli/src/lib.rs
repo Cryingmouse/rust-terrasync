@@ -30,7 +30,7 @@ pub enum Commands {
         id: Option<String>,
 
         /// Scan depth level
-        #[arg(short, long, default_value = "1")]
+        #[arg(short, long, default_value = "0")]
         depth: u32,
 
         /// Directory path to scan
@@ -47,6 +47,17 @@ pub enum Commands {
         #[arg(short, long, value_name = "EXPRESSION")]
         exclude: Vec<String>,
     },
+}
+
+/// 将作业ID转换为文件系统安全的标识符
+/// 将特殊字符转换为下划线，确保可用于目录和文件名
+pub fn sanitize_job_id(job_id: &str) -> String {
+    job_id
+        .replace('-', "_")
+        .replace('.', "_")
+        .replace(' ', "_")
+        .replace('/', "_")
+        .replace('\\', "_")
 }
 
 pub async fn cli_match() -> utils::error::Result<()> {

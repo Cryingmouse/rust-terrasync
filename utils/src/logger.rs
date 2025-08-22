@@ -24,14 +24,11 @@ pub fn default_root_logger() -> Result<slog::Logger> {
     // 从配置中获取日志级别
     let log_level = get_log_level_from_config();
 
-    // Create terminal drain for stdout output
-    let term_drain = default_term_drain().unwrap_or(default_discard()?);
-    
-    // Create file drain for file output
+    // 只创建文件 drain，移除终端输出
     let file_drain = default_file_drain().unwrap_or(default_discard()?);
-    
-    // Combine terminal and file drains
-    let drain = slog::Duplicate(term_drain, file_drain).fuse();
+
+    // 使用文件 drain 作为唯一输出
+    let drain = file_drain.fuse();
 
     // Merge additional drains based on features
     #[cfg(feature = "syslog")]
@@ -54,6 +51,23 @@ pub fn default_root_logger() -> Result<slog::Logger> {
     Ok(logger)
 }
 
+/// 专门用于console输出的logger
+pub fn console_logger() -> Result<slog::Logger> {
+    // 从配置中获取日志级别
+    let log_level = get_log_level_from_config();
+
+    // 创建终端 drain 用于console输出
+    let console_drain = default_term_drain().unwrap_or(default_discard()?);
+
+    // 应用日志级别过滤器
+    let drain = LevelFilter::new(console_drain, log_level).fuse();
+
+    // 创建 Logger，使用不同的tag区分console日志
+    let logger = slog::Logger::root(drain, o!("target" => "console"));
+
+    Ok(logger)
+}
+
 /// 从配置中获取日志级别
 fn get_log_level_from_config() -> Level {
     // 在测试环境中，配置可能未初始化，使用默认值
@@ -61,7 +75,7 @@ fn get_log_level_from_config() -> Level {
     {
         return Level::Info;
     }
-    
+
     // 在生产环境中使用实际配置
     #[cfg(not(test))]
     {
@@ -83,7 +97,7 @@ fn get_log_level_from_config() -> Level {
 
 fn default_discard() -> Result<slog_async::Async> {
     let drain = slog_async::Async::new(slog::Discard)
-        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
 
     Ok(drain)
@@ -94,11 +108,11 @@ fn default_discard() -> Result<slog_async::Async> {
 fn default_term_drain() -> Result<slog_async::Async> {
     let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
     let term = slog_term::FullFormat::new(plain)
-        .use_file_location()  // 添加文件路径和行号
+        .use_file_location() // 添加文件路径和行号
         .use_custom_timestamp(slog_term::timestamp_local);
 
     let drain = slog_async::Async::new(term.build().fuse())
-        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
 
     Ok(drain)
@@ -109,11 +123,11 @@ fn default_term_drain() -> Result<slog_async::Async> {
 fn default_term_drain() -> Result<slog_async::Async> {
     let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
     let term = slog_term::FullFormat::new(plain)
-        .use_file_location()  // 添加文件路径和行号
+        .use_file_location() // 添加文件路径和行号
         .use_custom_timestamp(slog_term::timestamp_local);
 
     let drain = slog_async::Async::new(term.build().fuse())
-        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
 
     Ok(drain)
@@ -125,37 +139,37 @@ fn default_file_drain() -> Result<slog_async::Async> {
     let current_exe = std::env::current_exe()?;
     let mut exe_dir = current_exe;
     exe_dir.pop(); // 移除可执行文件名，得到目录
-    
+
     // 如果无法获取可执行文件目录，使用当前工作目录
     if !exe_dir.exists() {
         exe_dir = std::env::current_dir()?;
     }
-    
+
     // 创建logs子目录
     let log_dir = exe_dir.join("logs");
-    
+
     // Create log directory if it doesn't exist
     std::fs::create_dir_all(&log_dir)?;
-    
+
     let log_file = log_dir.join("app.log");
-    
+
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .append(true)
         .open(log_file)?;
-    
+
     let decorator = slog_term::PlainSyncDecorator::new(file);
     let formatter = slog_term::FullFormat::new(decorator)
-        .use_file_location()  // 添加文件路径和行号
+        .use_file_location() // 添加文件路径和行号
         .use_custom_timestamp(slog_term::timestamp_local)
         .build()
         .fuse();
-    
+
     let drain = slog_async::Async::new(formatter)
-        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
-    
+
     Ok(drain)
 }
 
@@ -165,7 +179,7 @@ fn default_syslog_drain() -> Result<slog_async::Async> {
     let syslog = slog_syslog::unix_3164(Facility::LOG_USER)?;
 
     let drain = slog_async::Async::new(syslog.fuse())
-        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
 
     Ok(drain)
@@ -175,7 +189,7 @@ fn default_syslog_drain() -> Result<slog_async::Async> {
 fn default_journald_drain() -> Result<slog_async::Async> {
     let journald = JournaldDrain.ignore_res();
     let drain = slog_async::Async::new(journald)
-        .chan_size(1024)  // 增加通道容量，避免消息丢失
+        .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
 
     Ok(drain)
