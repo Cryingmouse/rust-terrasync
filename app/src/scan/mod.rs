@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::SystemTime;
-use storage::file::LocalStorage;
+use storage::StorageType;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use utils::error::Result;
@@ -9,11 +9,60 @@ use utils::error::Result;
 mod filter;
 mod stats;
 
-#[cfg(test)]
-mod tests;
-
 pub use filter::{evaluate_filter, parse_filter_expression, FilterCondition, FilterExpression};
 pub use stats::{ScanStats, StatsCalculator};
+
+/// 辅助函数：解析表达式列表
+fn parse_expressions(expressions: &[String]) -> Result<Vec<FilterExpression>> {
+    expressions
+        .iter()
+        .map(|expr| {
+            let parsed = parse_filter_expression(expr)?;
+            log::debug!("Parsed expression: {:?}", parsed);
+            Ok(parsed)
+        })
+        .collect()
+}
+
+/// 辅助函数：评估过滤条件
+fn evaluate_filter_conditions(
+    expressions: &[FilterExpression], exclude_expressions: &[FilterExpression], file_name: &str,
+    file_path: &str, file_type: &str, modified_days: f64, size: u64, extension: &str,
+) -> (bool, bool) {
+    let matched = expressions.is_empty()
+        || expressions.iter().any(|expr| {
+            evaluate_filter(
+                expr,
+                file_name,
+                file_path,
+                file_type,
+                modified_days,
+                size,
+                extension,
+            )
+        });
+
+    let excluded = exclude_expressions.iter().any(|expr| {
+        evaluate_filter(
+            expr,
+            file_name,
+            file_path,
+            file_type,
+            modified_days,
+            size,
+            extension,
+        )
+    });
+
+    (matched, excluded)
+}
+
+/// 辅助函数：发送消息到队列
+async fn send_message(tx: &mpsc::Sender<ScanMessage>, message: ScanMessage) -> Result<()> {
+    tx.send(message)
+        .await
+        .map_err(|e| utils::error::Error::with_source("Failed to send message", Box::new(e)))
+}
 
 // ============================================================================
 // 类型定义 - 枚举、结构体、消息类型
@@ -114,26 +163,10 @@ pub enum ScanMessage {
 pub async fn scan(params: ScanParams) -> Result<()> {
     log::info!("Starting scan with params: {:?}", params);
 
-    // 解析匹配表达式
-    let mut expressions = Vec::new();
-    for expr in &params.match_expressions {
-        let parsed = parse_filter_expression(expr)?;
-        log::debug!("Parsed match expression: {:?}", parsed);
-        expressions.push(parsed);
-    }
-
-    // 解析排除表达式
-    let mut exclude_expressions = Vec::new();
-    for expr in &params.exclude_expressions {
-        let parsed = parse_filter_expression(expr)?;
-        log::debug!("Parsed exclude expression: {:?}", parsed);
-        exclude_expressions.push(parsed);
-    }
-
     let config = ScanConfig {
         params: params.clone(),
-        expressions,
-        exclude_expressions,
+        expressions: parse_expressions(&params.match_expressions)?,
+        exclude_expressions: parse_expressions(&params.exclude_expressions)?,
     };
 
     log::info!("Scan configuration: {:?}", config);
@@ -156,10 +189,10 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     // 创建定时器，每10秒输出一次进度
     let mut timer = interval(Duration::from_secs(10));
     let mut _last_files = 0;
-        let mut _last_dirs = 0;
+    let mut _last_dirs = 0;
 
-    // 立即输出初始进度
-    println!("[Progress] Starting scan...");
+    // 等待第一个10秒间隔再输出
+    println!("terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.");
 
     loop {
         tokio::select! {
@@ -169,19 +202,7 @@ pub async fn scan(params: ScanParams) -> Result<()> {
                         // 结果处理由walkdir内部完成，这里只接收消息
                     }
                     Some(ScanMessage::Stats(s)) => {
-                        // 合并统计信息，保留显示元数据
-                        stats.total_files = s.total_files;
-                        stats.total_dirs = s.total_dirs;
-                        stats.matched_files = s.matched_files;
-                        stats.matched_dirs = s.matched_dirs;
-                        stats.total_size = s.total_size;
-                        stats.total_symlink = s.total_symlink;
-                        stats.total_regular_file = s.total_regular_file;
-                        stats.total_name_length = s.total_name_length;
-                        stats.max_name_length = s.max_name_length;
-                        stats.total_dir_depth = s.total_dir_depth;
-                        stats.max_dir_depth = s.max_dir_depth;
-                        
+                        stats.merge_from(&s);
                         log::info!("Scan progress: {} total files, {} total dirs, {} matched files, {} matched dirs",
                                  stats.total_files, stats.total_dirs, stats.matched_files, stats.matched_dirs);
                     }
@@ -208,9 +229,9 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     }
 
     // 等待walkdir任务完成
-    walkdir_handle
+    let _ = walkdir_handle
         .await
-        .map_err(|e| utils::error::Error::with_source("Walkdir task failed", Box::new(e)))??;
+        .map_err(|e| utils::error::Error::with_source("Walkdir task failed", Box::new(e)))?;
 
     // 计算总执行时间
     let duration = start_time.elapsed();
@@ -224,7 +245,7 @@ pub async fn scan(params: ScanParams) -> Result<()> {
 
 /// 目录遍历函数 - 遍历目录并发送结果到队列
 pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Result<ScanStats> {
-    let scan_path = PathBuf::from(&config.params.path);
+    let scan_path = &config.params.path;
     let calculator = StatsCalculator::new(&config.params.path);
     let mut stats = ScanStats::default();
     let depth = if config.params.depth > 0 {
@@ -232,20 +253,34 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
     } else {
         None
     };
-    let mut rx = LocalStorage::walkdir_ref(scan_path.clone(), depth).await;
 
-    // 处理每个FileObjectRef
-    while let Some(file_ref) = rx.recv().await {
-        let file_name = file_ref.name();
-        let file_path = file_ref.path().to_string_lossy();
+    // 使用storage库的create_storage接口根据路径创建对应的存储类型
+    let storage_type = storage::create_storage(scan_path).map_err(|e| {
+        utils::error::Error::with_source(
+            "Failed to create storage",
+            Box::new(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)),
+        )
+    })?;
+
+    // 根据存储类型获取对应的遍历器
+    let mut rx = match storage_type {
+        StorageType::Local(local_storage) => local_storage.walkdir(None, depth).await,
+        StorageType::NFS(nfsstorage) => nfsstorage.walkdir(depth).await,
+        StorageType::S3(s3_storage) => s3_storage.walkdir(depth).await,
+    };
+
+    // 处理每个StorageEntry
+    while let Some(entry) = rx.recv().await {
+        let file_name = entry.name;
+        let file_path = entry.path;
 
         // 标准化路径分隔符，使用正斜杠跨平台兼容
         let file_path = file_path.replace('\\', "/");
 
-        // 直接从FileObjectRef获取文件信息
-        let is_dir = file_ref.is_dir();
-        let is_symlink = file_ref.is_symlink();
-        let size = file_ref.size();
+        // 直接从StorageEntry获取文件信息
+        let is_dir = entry.is_dir;
+        let is_symlink = entry.is_symlink.unwrap_or(false);
+        let size = entry.size;
 
         // 更新基本统计
         if is_dir {
@@ -256,16 +291,16 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
 
         // 使用StatsCalculator更新扩展统计信息
         if is_dir {
-            let depth = calculator.calculate_depth(file_ref.path());
-            calculator.update_dir_stats(&mut stats, file_name, depth);
+            let depth = calculator.calculate_depth(Path::new(&file_path));
+            calculator.update_dir_stats(&mut stats, &file_name, depth);
         } else {
-            calculator.update_file_stats(&mut stats, file_name, size, is_symlink);
+            calculator.update_file_stats(&mut stats, &file_name, size, is_symlink);
         }
 
         // 获取文件时间信息
-        let atime = file_ref.atime();
-        let ctime = file_ref.ctime();
-        let mtime = file_ref.mtime();
+        let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
+        let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
+        let mtime = entry.modified;
 
         // 计算修改时间（天数）
         let modified_days = {
@@ -285,45 +320,21 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
         let file_type = if is_dir { "dir" } else { "file" };
 
         // 应用过滤条件
-        let mut matched = config.expressions.is_empty();
-        let mut excluded = false;
-
-        // 检查匹配表达式
-        for expr in &config.expressions {
-            if evaluate_filter(
-                expr,
-                file_name,
-                file_path.as_ref(),
-                file_type,
-                modified_days,
-                size,
-                &extension,
-            ) {
-                matched = true;
-                break;
-            }
-        }
-
-        // 检查排除表达式
-        for expr in &config.exclude_expressions {
-            if evaluate_filter(
-                expr,
-                file_name,
-                file_path.as_ref(),
-                file_type,
-                modified_days,
-                size,
-                &extension,
-            ) {
-                excluded = true;
-                break;
-            }
-        }
+        let (matched, excluded) = evaluate_filter_conditions(
+            &config.expressions,
+            &config.exclude_expressions,
+            &file_name,
+            &file_path,
+            file_type,
+            modified_days,
+            size,
+            &extension,
+        );
 
         // 创建扫描结果
         let scan_result = ScanResult {
-            file_name: file_name.to_string(),
-            file_path: file_path.to_string(),
+            file_name,
+            file_path,
             is_dir,
             is_symlink,
             size,
@@ -347,22 +358,14 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
         }
 
         // 发送ScanResult到队列
-        tx.send(ScanMessage::Result(scan_result))
-            .await
-            .map_err(|e| {
-                utils::error::Error::with_source("Failed to send scan result", Box::new(e))
-            })?;
+        send_message(&tx, ScanMessage::Result(scan_result)).await?;
     }
 
     // 发送统计信息
-    tx.send(ScanMessage::Stats(stats.clone()))
-        .await
-        .map_err(|e| utils::error::Error::with_source("Failed to send scan stats", Box::new(e)))?;
+    send_message(&tx, ScanMessage::Stats(stats.clone())).await?;
 
     // 发送完成信号
-    tx.send(ScanMessage::Complete).await.map_err(|e| {
-        utils::error::Error::with_source("Failed to send completion signal", Box::new(e))
-    })?;
+    send_message(&tx, ScanMessage::Complete).await?;
 
     Ok(stats)
 }

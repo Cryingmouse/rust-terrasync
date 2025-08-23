@@ -158,18 +158,31 @@ impl LocalStorage {
         Self { root }
     }
 
+    /// Get the root path
+    pub fn get_root(&self) -> &str {
+        &self.root
+    }
+
     /// Get full path for a key
     pub fn full_path(&self, key: &str) -> PathBuf {
         PathBuf::from(&self.root).join(key)
     }
 
-    /// 使用轻量级引用的walkdir版本，减少内存占用
-    pub async fn walkdir_ref(path: PathBuf, depth: Option<usize>) -> tokio::sync::mpsc::Receiver<FileObjectRef> {
+    /// 使用统一StorageEntry类型的walkdir版本
+    pub async fn walkdir(
+        &self, path: Option<PathBuf>, depth: Option<usize>,
+    ) -> tokio::sync::mpsc::Receiver<crate::StorageEntry> {
         use walkdir::WalkDir;
         let (tx, rx) = tokio::sync::mpsc::channel(1000); // 缓冲区大小1000
 
+        // 确定要遍历的路径：优先使用传入的path，否则使用self.root
+        let target_path = match path {
+            Some(p) => p,
+            None => PathBuf::from(&self.root),
+        };
+
         tokio::task::spawn_blocking(move || {
-            let mut walker = WalkDir::new(&path)
+            let mut walker = WalkDir::new(&target_path)
                 .follow_links(false) // 不跟随符号链接，避免循环
                 .max_open(100); // 限制同时打开的文件句柄数
 
@@ -181,16 +194,32 @@ impl LocalStorage {
             for entry in walker.into_iter().filter_map(|e| e.ok()) {
                 let path = entry.path().to_path_buf();
 
-                match entry.metadata() {
-                    Ok(info) => {
-                        let file_ref = FileObjectRef::new(path, &info);
+                if let Ok(info) = entry.metadata() {
+                    let name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
 
-                        if let Err(_) = tx.blocking_send(file_ref) {
-                            // 如果接收端已关闭，退出循环
-                            break;
-                        }
+                    let storage_entry = crate::StorageEntry {
+                        name,
+                        path: path.to_string_lossy().to_string(),
+                        is_dir: info.is_dir(),
+                        size: info.len(),
+                        modified: info.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                        is_symlink: Some(info.file_type().is_symlink()),
+                        accessed: info.accessed().ok(),
+                        created: info.created().ok(),
+                        nfs_fh3: None,
+                    };
+
+                    if tx.blocking_send(storage_entry).is_err() {
+                        // 如果接收端已关闭，退出循环
+                        break;
                     }
-                    Err(_) => continue, // 跳过无法获取元数据的文件
+                } else {
+                    // 忽略无法获取元数据的文件
+                    continue;
                 }
             }
         });
@@ -321,80 +350,10 @@ impl LocalStorage {
         tokio_fs::try_exists(&path).await
     }
 
+    // 删除FileObjectRef结构体及其相关实现
     /// Get file size asynchronously
     pub async fn size(&self, key: &str) -> io::Result<u64> {
         let obj = self.head(key).await?;
         Ok(obj.size())
-    }
-}
-
-/// 轻量级文件对象引用，减少内存占用
-#[derive(Debug)]
-pub struct FileObjectRef {
-    path: PathBuf,
-    name: String,
-    is_dir: bool,
-    is_symlink: bool,
-    size: u64,
-    atime: SystemTime,
-    ctime: SystemTime,
-    mtime: SystemTime,
-}
-
-impl FileObjectRef {
-    /// 从路径和元数据创建轻量级引用
-    pub fn new(path: PathBuf, metadata: &Metadata) -> Self {
-        let name = path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .into_owned();
-
-        Self {
-            path,
-            name,
-            is_dir: metadata.is_dir(),
-            is_symlink: metadata.file_type().is_symlink(),
-            size: metadata.len(),
-            atime: metadata.accessed().unwrap_or(SystemTime::UNIX_EPOCH),
-            ctime: metadata.created().unwrap_or(SystemTime::UNIX_EPOCH),
-            mtime: metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH),
-        }
-    }
-
-    /// 转换为完整的FileObject（按需）
-    pub async fn to_file_object(&self) -> io::Result<FileObject> {
-        let metadata = tokio_fs::metadata(&self.path).await?;
-
-        Ok(FileObject {
-            info: metadata,
-            path: self.path.clone(),
-            name: self.name.clone(),
-        })
-    }
-
-    pub fn name(&self) -> &str {
-        &self.name
-    }
-    pub fn path(&self) -> &Path {
-        &self.path
-    }
-    pub fn is_dir(&self) -> bool {
-        self.is_dir
-    }
-    pub fn is_symlink(&self) -> bool {
-        self.is_symlink
-    }
-    pub fn size(&self) -> u64 {
-        self.size
-    }
-    pub fn atime(&self) -> SystemTime {
-        self.atime
-    }
-    pub fn ctime(&self) -> SystemTime {
-        self.ctime
-    }
-    pub fn mtime(&self) -> SystemTime {
-        self.mtime
     }
 }

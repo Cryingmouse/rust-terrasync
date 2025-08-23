@@ -26,13 +26,14 @@ async fn main() -> Result<()> {
             .install();
     }
 
-    let _guard = utils::logger::setup_logging()?;
-
-    // Initialize Configuration
+    // Initialize Configuration first
     let config_contents = include_str!("resources/default_config.toml");
     AppConfig::init(Some(config_contents))?;
 
-    // Match Commands
+    // Setup logging before parsing CLI arguments
+    let _guard = utils::logger::setup_logging()?;
+
+    // Parse CLI arguments and match commands
     cli::cli_match().await?;
 
     Ok(())

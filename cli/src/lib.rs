@@ -8,6 +8,10 @@ mod commands;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+
+    /// Set the logging level (debug, info)
+    #[arg(short, long, global = true)]
+    pub log_level: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -61,8 +65,12 @@ pub fn sanitize_job_id(job_id: &str) -> String {
 }
 
 pub async fn cli_match() -> utils::error::Result<()> {
-    // Parse the command line arguments
     let cli = Cli::parse();
+
+    // 处理日志级别参数
+    if let Some(log_level) = &cli.log_level {
+        std::env::set_var("RUST_LOG_LEVEL", log_level);
+    }
 
     // Execute the subcommand
     match &cli.command {

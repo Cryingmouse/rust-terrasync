@@ -118,3 +118,14 @@ impl From<String> for Error {
         }
     }
 }
+
+impl From<Box<dyn std::error::Error + Send + Sync>> for Error {
+    fn from(err: Box<dyn std::error::Error + Send + Sync>) -> Self {
+        Error {
+            msg: "Storage Error".to_string(),
+            #[cfg(feature = "nightly")]
+            backtrace: std::backtrace::Backtrace::capture(),
+            source: Some(err),
+        }
+    }
+}

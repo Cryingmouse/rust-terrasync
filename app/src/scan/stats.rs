@@ -1,6 +1,6 @@
+use crate::scan::ScanParams;
 use serde::Serialize;
 use std::fmt;
-use crate::scan::ScanParams;
 use std::path::Path;
 
 /// 扫描统计结构体 - 整体统计信息
@@ -20,7 +20,7 @@ pub struct ScanStats {
     pub max_name_length: usize,  // 最大文件名长度
     pub total_dir_depth: i64,    // 总目录深度
     pub max_dir_depth: usize,    // 最大目录深度
-    
+
     // 显示相关元数据
     pub command: String,
     pub job_id: String,
@@ -32,7 +32,7 @@ impl ScanStats {
     /// 根据ScanParams构建完整的命令字符串
     pub fn build_command(params: &ScanParams) -> String {
         let mut command_parts = vec![format!("terrasync scan \"{}\"", params.path)];
-        
+
         if let Some(id) = &params.id {
             command_parts.push(format!("--id \"{}\"", id));
         }
@@ -40,19 +40,43 @@ impl ScanStats {
             command_parts.push(format!("--depth {}", params.depth));
         }
         if !params.match_expressions.is_empty() {
-            command_parts.push(format!("--expression \"{}\"", params.match_expressions.join(" \"")));
+            command_parts.push(format!(
+                "--expression \"{}\"",
+                params.match_expressions.join(" \"")
+            ));
         }
         if !params.exclude_expressions.is_empty() {
-            command_parts.push(format!("--exclude \"{}\"", params.exclude_expressions.join(" \"")));
+            command_parts.push(format!(
+                "--exclude \"{}\"",
+                params.exclude_expressions.join(" \"")
+            ));
         }
-        
+
         command_parts.join(" ")
     }
 
     /// 构建日志文件路径（使用当前执行目录）
     pub fn build_log_path() -> String {
         let current_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        current_dir.join("terrasync.log").to_string_lossy().to_string()
+        current_dir
+            .join("terrasync.log")
+            .to_string_lossy()
+            .to_string()
+    }
+
+    /// 从另一个ScanStats合并统计信息（保留显示元数据）
+    pub fn merge_from(&mut self, other: &ScanStats) {
+        self.total_files = other.total_files;
+        self.total_dirs = other.total_dirs;
+        self.matched_files = other.matched_files;
+        self.matched_dirs = other.matched_dirs;
+        self.total_size = other.total_size;
+        self.total_symlink = other.total_symlink;
+        self.total_regular_file = other.total_regular_file;
+        self.total_name_length = other.total_name_length;
+        self.max_name_length = self.max_name_length.max(other.max_name_length);
+        self.total_dir_depth = other.total_dir_depth;
+        self.max_dir_depth = self.max_dir_depth.max(other.max_dir_depth);
     }
 }
 
@@ -73,7 +97,7 @@ impl Default for ScanStats {
             max_name_length: 0,
             total_dir_depth: 0,
             max_dir_depth: 0,
-            
+
             // 显示相关元数据
             command: String::from("terrasync scan"),
             job_id: String::new(),
@@ -85,7 +109,6 @@ impl Default for ScanStats {
 
 impl fmt::Display for ScanStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-
         let total_items = self.total_files + self.total_dirs;
         let avg_file_size = if self.total_files > 0 {
             self.total_size as f64 / self.total_files as f64

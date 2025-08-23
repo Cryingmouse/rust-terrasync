@@ -21,8 +21,16 @@ pub fn setup_logging() -> Result<slog_scope::GlobalLoggerGuard> {
 }
 
 pub fn default_root_logger() -> Result<slog::Logger> {
-    // 从配置中获取日志级别
-    let log_level = get_log_level_from_config();
+    default_root_logger_with_level(None)
+}
+
+pub fn default_root_logger_with_level(log_level: Option<&str>) -> Result<slog::Logger> {
+    // 优先使用命令行参数，其次使用配置文件
+    let log_level = if let Some(level) = log_level {
+        parse_log_level(level)
+    } else {
+        get_log_level_from_config()
+    };
 
     // 只创建文件 drain，移除终端输出
     let file_drain = default_file_drain().unwrap_or(default_discard()?);
@@ -51,21 +59,15 @@ pub fn default_root_logger() -> Result<slog::Logger> {
     Ok(logger)
 }
 
-/// 专门用于console输出的logger
-pub fn console_logger() -> Result<slog::Logger> {
-    // 从配置中获取日志级别
-    let log_level = get_log_level_from_config();
-
-    // 创建终端 drain 用于console输出
-    let console_drain = default_term_drain().unwrap_or(default_discard()?);
-
-    // 应用日志级别过滤器
-    let drain = LevelFilter::new(console_drain, log_level).fuse();
-
-    // 创建 Logger，使用不同的tag区分console日志
-    let logger = slog::Logger::root(drain, o!("target" => "console"));
-
-    Ok(logger)
+/// 解析字符串为日志级别
+fn parse_log_level(level: &str) -> Level {
+    match level.to_lowercase().as_str() {
+        "debug" => Level::Debug,
+        "info" => Level::Info,
+        "warn" | "warning" => Level::Warning,
+        "error" => Level::Error,
+        _ => Level::Info,
+    }
 }
 
 /// 从配置中获取日志级别
@@ -79,15 +81,14 @@ fn get_log_level_from_config() -> Level {
     // 在生产环境中使用实际配置
     #[cfg(not(test))]
     {
+        // 优先检查环境变量
+        if let Ok(env_level) = std::env::var("RUST_LOG_LEVEL") {
+            return parse_log_level(&env_level);
+        }
+
         // 尝试从AppConfig获取日志级别
         if let Ok(config) = AppConfig::get::<crate::app_config::LogConfig>("log") {
-            match config.level.as_str() {
-                "debug" => Level::Debug,
-                "info" => Level::Info,
-                "warn" => Level::Warning,
-                "error" => Level::Error,
-                _ => Level::Info,
-            }
+            parse_log_level(&config.level)
         } else {
             // 如果无法获取配置，使用默认级别
             Level::Info
@@ -97,21 +98,6 @@ fn get_log_level_from_config() -> Level {
 
 fn default_discard() -> Result<slog_async::Async> {
     let drain = slog_async::Async::new(slog::Discard)
-        .chan_size(1024) // 增加通道容量，避免消息丢失
-        .build();
-
-    Ok(drain)
-}
-
-// term drain: Log to Terminal
-#[cfg(not(feature = "termlog"))]
-fn default_term_drain() -> Result<slog_async::Async> {
-    let plain = slog_term::PlainSyncDecorator::new(std::io::stdout());
-    let term = slog_term::FullFormat::new(plain)
-        .use_file_location() // 添加文件路径和行号
-        .use_custom_timestamp(slog_term::timestamp_local);
-
-    let drain = slog_async::Async::new(term.build().fuse())
         .chan_size(1024) // 增加通道容量，避免消息丢失
         .build();
 
