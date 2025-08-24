@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::config::ClickHouseConfig;
 use crate::error::{DatabaseError, Result};
 use crate::traits::{Database, QueryResult, TableSchema};
+use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME, SCAN_TEMP_TABLE_BASE_NAME};
 
 /// 文件扫描事件结构体 - 用于异步插入
 #[derive(Debug, Clone, Serialize, Deserialize, clickhouse::Row)]
@@ -33,11 +34,6 @@ pub struct ClickHouseDatabase {
     job_id: String,
     scan_temp_table_name: Option<String>,
 }
-
-// Table name constants
-const SCAN_BASE_TABLE_BASE_NAME: &str = "scan_base";
-const SCAN_TEMP_TABLE_BASE_NAME: &str = "temp_files";
-const SCAN_STATE_TABLE_BASE_NAME: &str = "scan_state";
 
 /// 文件扫描记录的标准列定义
 const FILE_SCAN_COLUMNS_DEFINITION: &str = r#"
@@ -402,7 +398,7 @@ impl Database for ClickHouseDatabase {
 
     async fn create_scan_temporary_table(&mut self) -> Result<()> {
         let uuid = Uuid::new_v4().to_string().replace('-', "_");
-        let temp_table_name = format!("temp_files_{}", uuid);
+        let temp_table_name = format!("{}_{}", SCAN_TEMP_TABLE_BASE_NAME, uuid);
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({}) ENGINE = MergeTree() ORDER BY (path)",
             temp_table_name, FILE_SCAN_COLUMNS_DEFINITION

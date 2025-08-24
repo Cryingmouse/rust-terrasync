@@ -1,18 +1,16 @@
 use async_trait::async_trait;
-use rusqlite::{Connection, params_from_iter, types::ValueRef};
+use rusqlite::{params_from_iter, types::ValueRef, Connection};
 use serde_json::Value;
 use slog_scope::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::config::SQLiteConfig;
-use crate::error::Result;
-use crate::traits::{ColumnInfo, Database, QueryResult, TableSchema};
-
-const SCAN_BASE_TABLE_BASE_NAME: &str = "scan_base";
-const SCAN_TEMP_TABLE_BASE_NAME: &str = "scan_temp";
-const SCAN_STATE_TABLE_BASE_NAME: &str = "scan_state";
+use crate::error::{DatabaseError, Result};
+use crate::traits::{Database, QueryResult, TableSchema};
+use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME, SCAN_TEMP_TABLE_BASE_NAME};
 
 const FILE_SCAN_COLUMNS_DEFINITION: &str = "
     path TEXT PRIMARY KEY,
@@ -31,7 +29,6 @@ const FILE_SCAN_COLUMNS_DEFINITION: &str = "
 
 pub struct SQLiteDatabase {
     connection: Arc<Mutex<Connection>>,
-    #[allow(dead_code)]
     config: SQLiteConfig,
     job_id: String,
     scan_temp_table_name: String,
@@ -67,10 +64,6 @@ impl SQLiteDatabase {
 
     fn get_scan_base_table_name(&self) -> String {
         format!("{}_{}", SCAN_BASE_TABLE_BASE_NAME, self.job_id)
-    }
-
-    fn get_scan_temp_table_name(&self) -> String {
-        format!("{}_{}", SCAN_TEMP_TABLE_BASE_NAME, self.job_id)
     }
 
     fn get_scan_state_table_name(&self) -> String {
@@ -242,7 +235,8 @@ impl Database for SQLiteDatabase {
     async fn ping(&self) -> Result<()> {
         let conn = self.connection.lock().await;
 
-        conn.execute("SELECT 1", [])?;
+        // 使用 query_row 而不是 execute 来处理 SELECT 语句
+        conn.query_row("SELECT 1", [], |_| Ok(()))?;
         Ok(())
     }
 
@@ -261,9 +255,10 @@ impl Database for SQLiteDatabase {
     }
 
     async fn create_scan_temporary_table(&mut self) -> Result<()> {
+        let uuid = Uuid::new_v4().to_string().replace('-', "_");
+        let temp_table_name = format!("{}_{}", SCAN_TEMP_TABLE_BASE_NAME, uuid);
+        
         let conn = self.connection.lock().await;
-        let temp_table_name = self.get_scan_temp_table_name();
-
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({})",
             temp_table_name, FILE_SCAN_COLUMNS_DEFINITION
@@ -272,13 +267,17 @@ impl Database for SQLiteDatabase {
         debug!("Creating SQLite scan temporary table: {}", temp_table_name);
         conn.execute(&create_table_sql, [])?;
 
+        // 更新临时表名
+        self.scan_temp_table_name = temp_table_name;
+
         debug!("SQLite scan temporary table created successfully");
         Ok(())
     }
 
     async fn drop_scan_temporary_table(&mut self) -> Result<()> {
         let conn = self.connection.lock().await;
-        let temp_table_name = self.get_scan_temp_table_name();
+        let temp_table_name = self.get_scan_temp_table_name()
+            .ok_or_else(|| DatabaseError::UnsupportedType("No temporary table available".to_string()))?;
 
         let drop_table_sql = format!("DROP TABLE IF EXISTS {}", temp_table_name);
 
