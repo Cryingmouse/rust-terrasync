@@ -54,8 +54,8 @@ let config = DatabaseConfig {
 use db::{DatabaseConfig, ClickHouseConfig};
 
 let config = DatabaseConfig {
-    enabled: true,
     db_type: "clickhouse".to_string(),
+    enabled: true,
     batch_size: 1000,
     clickhouse: Some(ClickHouseConfig {
         dsn: "tcp://localhost:9000".to_string(),
@@ -124,29 +124,6 @@ let batch_params = vec![
     vec![json!("Charlie")],
 ];
 let results = database.execute_batch(sql, &batch_params).await?;
-```
-
-### 5. Database Manager for Multiple Databases
-
-```rust
-use db::DatabaseManager;
-
-let mut manager = DatabaseManager::new();
-
-// Add multiple databases
-manager.add_database("sqlite_main".to_string(), sqlite_db)?;
-manager.add_database("clickhouse_analytics".to_string(), clickhouse_db)?;
-
-// Initialize all
-manager.initialize_all().await?;
-
-// Get specific database
-if let Some(db) = manager.get_database_mut("sqlite_main") {
-    // Use the database
-}
-
-// Close all
-manager.close_all().await?;
 ```
 
 ## Adding New Database Types

@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::config::SQLiteConfig;
 use crate::error::{DatabaseError, Result};
 use crate::traits::{Database, QueryResult, TableSchema};
+use crate::{generate_scan_temp_table_name, get_scan_base_table_name, get_scan_state_table_name};
 use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME, SCAN_TEMP_TABLE_BASE_NAME};
 
 const FILE_SCAN_COLUMNS_DEFINITION: &str = "
@@ -62,17 +63,9 @@ impl SQLiteDatabase {
         })
     }
 
-    fn get_scan_base_table_name(&self) -> String {
-        format!("{}_{}", SCAN_BASE_TABLE_BASE_NAME, self.job_id)
-    }
-
-    fn get_scan_state_table_name(&self) -> String {
-        format!("{}_{}", SCAN_STATE_TABLE_BASE_NAME, self.job_id)
-    }
-
     async fn create_scan_base_table(&self) -> Result<()> {
         let conn = self.connection.lock().await;
-        let table_name = self.get_scan_base_table_name();
+        let table_name = get_scan_base_table_name(&self.job_id);
 
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({})",
@@ -257,7 +250,7 @@ impl Database for SQLiteDatabase {
     async fn create_scan_temporary_table(&mut self) -> Result<()> {
         let uuid = Uuid::new_v4().to_string().replace('-', "_");
         let temp_table_name = format!("{}_{}", SCAN_TEMP_TABLE_BASE_NAME, uuid);
-        
+
         let conn = self.connection.lock().await;
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({})",
@@ -276,8 +269,9 @@ impl Database for SQLiteDatabase {
 
     async fn drop_scan_temporary_table(&mut self) -> Result<()> {
         let conn = self.connection.lock().await;
-        let temp_table_name = self.get_scan_temp_table_name()
-            .ok_or_else(|| DatabaseError::UnsupportedType("No temporary table available".to_string()))?;
+        let temp_table_name = self.get_scan_temp_table_name().ok_or_else(|| {
+            DatabaseError::UnsupportedType("No temporary table available".to_string())
+        })?;
 
         let drop_table_sql = format!("DROP TABLE IF EXISTS {}", temp_table_name);
 

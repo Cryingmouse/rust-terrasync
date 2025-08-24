@@ -1,6 +1,5 @@
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
 
 use crate::config::DatabaseConfig;
 use crate::error::{DatabaseError, Result};
@@ -11,7 +10,12 @@ use crate::sqlite::SQLiteDatabase;
 
 pub type DatabaseCreator = fn(config: &DatabaseConfig) -> Result<Box<dyn Database>>;
 
-static DATABASE_REGISTRY: Lazy<DashMap<String, DatabaseCreator>> = Lazy::new(DashMap::new);
+static DATABASE_REGISTRY: Lazy<DashMap<String, DatabaseCreator>> = Lazy::new(|| {
+    let registry = DashMap::new();
+    // 自动注册内置数据库类型
+    let _ = register_builtin_types(&registry);
+    registry
+});
 
 pub struct DatabaseFactory;
 
@@ -46,39 +50,6 @@ impl DatabaseFactory {
             .map(|entry| entry.key().clone())
             .collect()
     }
-
-    /// Initialize built-in database types
-    pub fn initialize() -> Result<()> {
-        // Register ClickHouse
-        Self::register_database_type("clickhouse", |config| {
-            if let Some(clickhouse_config) = &config.clickhouse {
-                Ok(Box::new(ClickHouseDatabase::new(
-                    clickhouse_config.clone(),
-                    config.job_id.clone(),
-                )))
-            } else {
-                Err(DatabaseError::ConfigError(
-                    "ClickHouse configuration missing".to_string(),
-                ))
-            }
-        })?;
-
-        // Register SQLite
-        Self::register_database_type("sqlite", |config| {
-            if let Some(sqlite_config) = &config.sqlite {
-                Ok(Box::new(SQLiteDatabase::new(
-                    sqlite_config.clone(),
-                    config.job_id.clone(),
-                )?))
-            } else {
-                Err(DatabaseError::ConfigError(
-                    "SQLite configuration missing".to_string(),
-                ))
-            }
-        })?;
-
-        Ok(())
-    }
 }
 
 /// Convenience function to create a database from configuration
@@ -86,60 +57,35 @@ pub fn create_database(config: &DatabaseConfig) -> Result<Box<dyn Database>> {
     DatabaseFactory::create_database(config)
 }
 
-/// Database manager for handling multiple database instances
-pub struct DatabaseManager {
-    databases: HashMap<String, Box<dyn Database>>,
-}
-
-impl DatabaseManager {
-    pub fn new() -> Self {
-        Self {
-            databases: HashMap::new(),
+// 内置类型注册函数
+fn register_builtin_types(registry: &DashMap<String, DatabaseCreator>) -> Result<()> {
+    // Register ClickHouse
+    registry.insert("clickhouse".to_string(), |config| {
+        if let Some(clickhouse_config) = &config.clickhouse {
+            Ok(Box::new(ClickHouseDatabase::new(
+                clickhouse_config.clone(),
+                config.job_id.clone(),
+            )))
+        } else {
+            Err(DatabaseError::ConfigError(
+                "ClickHouse configuration missing".to_string(),
+            ))
         }
-    }
+    });
 
-    pub fn add_database(&mut self, name: String, database: Box<dyn Database>) -> Result<()> {
-        self.databases.insert(name, database);
-        Ok(())
-    }
-
-    pub fn get_database(&self, name: &str) -> Option<&Box<dyn Database>> {
-        self.databases.get(name)
-    }
-
-    pub fn get_database_mut(&mut self, name: &str) -> Option<&mut Box<dyn Database>> {
-        self.databases.get_mut(name)
-    }
-
-    pub fn remove_database(&mut self, name: &str) -> Option<Box<dyn Database>> {
-        self.databases.remove(name)
-    }
-
-    pub async fn initialize_all(&mut self) -> Result<()> {
-        for (name, db) in &mut self.databases {
-            db.initialize().await.map_err(|e| {
-                DatabaseError::ConnectionError(format!("Failed to initialize {}: {}", name, e))
-            })?;
+    // Register SQLite
+    registry.insert("sqlite".to_string(), |config| {
+        if let Some(sqlite_config) = &config.sqlite {
+            Ok(Box::new(SQLiteDatabase::new(
+                sqlite_config.clone(),
+                config.job_id.clone(),
+            )?))
+        } else {
+            Err(DatabaseError::ConfigError(
+                "SQLite configuration missing".to_string(),
+            ))
         }
-        Ok(())
-    }
+    });
 
-    pub async fn close_all(&mut self) -> Result<()> {
-        for (name, db) in &mut self.databases {
-            db.close()
-                .await
-                .map_err(|e| DatabaseError::Other(format!("Failed to close {}: {}", name, e)))?;
-        }
-        Ok(())
-    }
-
-    pub fn list_databases(&self) -> Vec<String> {
-        self.databases.keys().cloned().collect()
-    }
-}
-
-impl Default for DatabaseManager {
-    fn default() -> Self {
-        Self::new()
-    }
+    Ok(())
 }

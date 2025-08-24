@@ -3,11 +3,11 @@ use clickhouse::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slog_scope::debug;
-use uuid::Uuid;
 
 use crate::config::ClickHouseConfig;
 use crate::error::{DatabaseError, Result};
 use crate::traits::{Database, QueryResult, TableSchema};
+use crate::{generate_scan_temp_table_name, get_scan_base_table_name, get_scan_state_table_name};
 use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME, SCAN_TEMP_TABLE_BASE_NAME};
 
 /// 文件扫描事件结构体 - 用于异步插入
@@ -84,20 +84,12 @@ impl ClickHouseDatabase {
         }
     }
 
-    fn get_scan_base_table_name(&self) -> String {
-        format!("{}_{}", SCAN_BASE_TABLE_BASE_NAME, self.job_id)
-    }
-
-    fn get_scan_state_table_name(&self) -> String {
-        format!("{}_{}", SCAN_STATE_TABLE_BASE_NAME, self.job_id)
-    }
-
     /// 创建主扫描表
     /// 创建包含完整文件信息字段的主表，用于存储扫描结果
     /// 表结构包含：路径、大小、扩展名、创建时间、修改时间、访问时间、权限、符号链接标志、目录标志、普通文件标志、目录句柄、当前状态
     /// 使用ReplacingMergeTree引擎，基于path字段排序，自动处理重复数据
     pub async fn create_scan_base_table(&self) -> Result<()> {
-        let table_name = self.get_scan_base_table_name();
+        let table_name = get_scan_base_table_name(&self.job_id);
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({}) ENGINE = ReplacingMergeTree() ORDER BY (path)",
             table_name, FILE_SCAN_COLUMNS_DEFINITION
@@ -113,7 +105,7 @@ impl ClickHouseDatabase {
     /// 创建用于存储扫描状态信息的表，包含id和origin_state字段
     /// 使用ReplacingMergeTree引擎，基于id字段排序，确保状态数据唯一性
     pub async fn create_scan_state_table(&self) -> Result<()> {
-        let table_name = self.get_scan_state_table_name();
+        let table_name = get_scan_state_table_name(&self.job_id);
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} (id UInt8, origin_state UInt8) ENGINE = ReplacingMergeTree() ORDER BY id",
             table_name
@@ -166,7 +158,7 @@ impl ClickHouseDatabase {
 
     /// 异步插入单个文件扫描事件
     pub async fn insert_file_record_async(&self, event: FileScanRecord) -> Result<()> {
-        let table_name = self.get_scan_base_table_name();
+        let table_name = get_scan_base_table_name(&self.job_id);
         let mut insert = self
             .async_client
             .insert::<FileScanRecord>(&table_name)
@@ -188,7 +180,7 @@ impl ClickHouseDatabase {
 
     /// 同步插入scan_state表，id固定为1
     pub async fn insert_scan_state_sync(&self, origin_state: u8) -> Result<()> {
-        let table_name = self.get_scan_state_table_name();
+        let table_name = get_scan_state_table_name(&self.job_id);
         let insert_sql = format!(
             "INSERT INTO {} (id, origin_state) VALUES (?, ?)",
             table_name
@@ -213,7 +205,7 @@ impl ClickHouseDatabase {
 
     /// 查询scan_base表，支持指定列查询，使用FINAL关键字
     pub async fn query_scan_base_table(&self, columns: &[&str]) -> Result<Vec<FileScanRecord>> {
-        let table_name = self.get_scan_base_table_name();
+        let table_name = get_scan_base_table_name(&self.job_id);
         let select_columns = if columns.is_empty() {
             "*".to_string()
         } else {
@@ -234,7 +226,7 @@ impl ClickHouseDatabase {
 
     /// 查询scan_state表
     pub async fn query_scan_state_table(&self) -> Result<Vec<(u8, u8)>> {
-        let table_name = self.get_scan_state_table_name();
+        let table_name = get_scan_state_table_name(&self.job_id);
         let query = format!("SELECT id, origin_state FROM {} FINAL", table_name);
 
         let rows = self
@@ -397,8 +389,7 @@ impl Database for ClickHouseDatabase {
     }
 
     async fn create_scan_temporary_table(&mut self) -> Result<()> {
-        let uuid = Uuid::new_v4().to_string().replace('-', "_");
-        let temp_table_name = format!("{}_{}", SCAN_TEMP_TABLE_BASE_NAME, uuid);
+        let temp_table_name = generate_scan_temp_table_name();
         let create_table_sql = format!(
             "CREATE TABLE IF NOT EXISTS {} ({}) ENGINE = MergeTree() ORDER BY (path)",
             temp_table_name, FILE_SCAN_COLUMNS_DEFINITION
