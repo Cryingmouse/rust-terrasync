@@ -23,6 +23,10 @@ pub struct StorageEntry {
     pub created: Option<SystemTime>,
     /// NFS文件句柄（仅NFS使用）
     pub nfs_fh3: Option<nfs3::nfs_fh3>,
+    /// 文件权限模式字符串（如rwxr-xr-x）
+    pub mode: Option<String>,
+    /// 硬链接数（仅本地文件系统和NFS）
+    pub hard_links: Option<u64>,
 }
 
 impl StorageEntry {

@@ -4,6 +4,11 @@ use std::io;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
+
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
+#[cfg(windows)]
+
 use tokio::fs as tokio_fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
@@ -201,6 +206,12 @@ impl LocalStorage {
                         .to_string_lossy()
                         .into_owned();
 
+                    #[cfg(unix)]
+                    let hard_links = info.nlink() as u64;
+                    
+                    #[cfg(not(unix))]
+                    let hard_links = 1;
+                    
                     let storage_entry = crate::StorageEntry {
                         name,
                         path: path.to_string_lossy().to_string(),
@@ -211,6 +222,8 @@ impl LocalStorage {
                         accessed: info.accessed().ok(),
                         created: info.created().ok(),
                         nfs_fh3: None,
+                        mode: None, // LocalStorage暂时不提供mode信息
+                        hard_links: Some(hard_links),
                     };
 
                     if tx.blocking_send(storage_entry).is_err() {

@@ -102,46 +102,7 @@ impl NFSStorage {
 
             let dir_entries = readdirplus.reply.entries.into_inner();
             for entry in &dir_entries {
-                let name = String::from_utf8_lossy(&entry.name.0).to_string();
-                let attrs = &entry.name_attributes;
-                let (is_dir, size, modified_time) = if let Nfs3Option::Some(attrs) = attrs {
-                    let is_dir = matches!(attrs.type_, nfs3::ftype3::NF3DIR);
-                    let mtime = &attrs.mtime;
-                    let duration = Duration::new(u64::from(mtime.seconds), mtime.nseconds);
-                    let systime = UNIX_EPOCH.checked_add(duration).unwrap_or(UNIX_EPOCH);
-                    let modified: DateTime<Utc> = systime.into();
-                    (is_dir, attrs.size, modified)
-                } else {
-                    (false, 0, Utc::now())
-                };
-
-                let nfs_fh3 = match &entry.name_handle {
-                    Nfs3Option::Some(handle) => handle.clone(),
-                    Nfs3Option::None => nfs3::nfs_fh3::default(),
-                };
-
-                let full_path = if dir_path.ends_with('/') {
-                    format!("{}{}", dir_path, name)
-                } else {
-                    format!("{}/{}", dir_path, name)
-                };
-
-                let storage_entry = crate::StorageEntry {
-                    name: name.clone(),
-                    path: full_path,
-                    is_dir,
-                    size,
-                    modified: {
-                        use std::time::{Duration, UNIX_EPOCH};
-                        let duration = Duration::new(modified_time.timestamp() as u64, 0);
-                        UNIX_EPOCH.checked_add(duration).unwrap_or(UNIX_EPOCH)
-                    },
-                    is_symlink: None,
-                    accessed: None,
-                    created: None,
-                    nfs_fh3: Some(nfs_fh3.clone()),
-                };
-
+                let storage_entry = Self::build_storage_entry_detailed(entry, dir_path)?;
                 if tx.send(storage_entry).is_err() {
                     break;
                 }
@@ -238,87 +199,16 @@ impl NFSStorage {
 
                 let dir_entries = readdirplus.reply.entries.into_inner();
                 for entry in &dir_entries {
-                    let name = String::from_utf8_lossy(&entry.name.0).to_string();
-
                     // Skip . and .. entries
+                    let name = String::from_utf8_lossy(&entry.name.0).to_string();
                     if name == "." || name == ".." {
                         continue;
                     }
 
-                    let attrs = &entry.name_attributes;
-                    let (is_dir, is_symlink, size, modified_time, accessed_time, created_time) =
-                        if let Nfs3Option::Some(attrs) = attrs {
-                            let file_type = &attrs.type_;
-                            let is_dir = matches!(file_type, nfs3::ftype3::NF3DIR);
-                            let is_symlink = matches!(file_type, nfs3::ftype3::NF3LNK);
-
-                            // 修改时间 (mtime)
-                            let mtime = &attrs.mtime;
-                            let modified_duration =
-                                Duration::new(u64::from(mtime.seconds), mtime.nseconds);
-                            let modified_time = UNIX_EPOCH
-                                .checked_add(modified_duration)
-                                .unwrap_or(UNIX_EPOCH);
-                            let modified: DateTime<Utc> = modified_time.into();
-
-                            // 访问时间 (atime)
-                            let atime = &attrs.atime;
-                            let accessed_duration =
-                                Duration::new(u64::from(atime.seconds), atime.nseconds);
-                            let accessed_time = UNIX_EPOCH
-                                .checked_add(accessed_duration)
-                                .unwrap_or(UNIX_EPOCH);
-                            let accessed: DateTime<Utc> = accessed_time.into();
-
-                            // 创建/状态变更时间 (ctime)
-                            let ctime = &attrs.ctime;
-                            let created_duration =
-                                Duration::new(u64::from(ctime.seconds), ctime.nseconds);
-                            let created_time = UNIX_EPOCH
-                                .checked_add(created_duration)
-                                .unwrap_or(UNIX_EPOCH);
-                            let created: DateTime<Utc> = created_time.into();
-
-                            (is_dir, is_symlink, attrs.size, modified, accessed, created)
-                        } else {
-                            (false, false, 0, Utc::now(), Utc::now(), Utc::now())
-                        };
-
-                    let nfs_fh3 = match &entry.name_handle {
-                        Nfs3Option::Some(handle) => handle.clone(),
-                        Nfs3Option::None => nfs3::nfs_fh3::default(),
-                    };
-
-                    let full_path = if dir_path.ends_with('/') {
-                        format!("{}{}", dir_path, name)
-                    } else {
-                        format!("{}/{}", dir_path, name)
-                    };
-
-                    let storage_entry = crate::StorageEntry {
-                        name: name.clone(),
-                        path: full_path.clone(),
-                        is_dir,
-                        size,
-                        modified: {
-                            use std::time::{Duration, UNIX_EPOCH};
-                            let duration = Duration::new(modified_time.timestamp() as u64, 0);
-                            UNIX_EPOCH.checked_add(duration).unwrap_or(UNIX_EPOCH)
-                        },
-                        is_symlink: Some(is_symlink),
-                        accessed: Some({
-                            use std::time::{Duration, UNIX_EPOCH};
-                            let duration = Duration::new(accessed_time.timestamp() as u64, 0);
-                            UNIX_EPOCH.checked_add(duration).unwrap_or(UNIX_EPOCH)
-                        }),
-                        created: Some({
-                            use std::time::{Duration, UNIX_EPOCH};
-                            let duration = Duration::new(created_time.timestamp() as u64, 0);
-                            UNIX_EPOCH.checked_add(duration).unwrap_or(UNIX_EPOCH)
-                        }),
-                        nfs_fh3: Some(nfs_fh3.clone()),
-                    };
-
+                    let storage_entry = Self::build_storage_entry_detailed(entry, dir_path)?;
+                    let is_dir = storage_entry.is_dir;
+                    let full_path = storage_entry.path.clone();
+                    
                     if tx.send(storage_entry).await.is_err() {
                         return Ok(());
                     }
@@ -365,4 +255,160 @@ impl NFSStorage {
     pub fn path(&self) -> Option<&str> {
         self.path.as_deref()
     }
+
+    /// 统一的StorageEntry构建函数，用于list_directory_internal和list_directory_recursive_internal
+    fn build_storage_entry_detailed(
+        entry: &nfs3::entryplus3,
+        dir_path: &str,
+    ) -> NfsResult<crate::StorageEntry> {
+        let name = String::from_utf8_lossy(&entry.name.0).to_string();
+        let attrs = &entry.name_attributes;
+        let (
+            is_dir,
+            is_symlink,
+            size,
+            modified_time,
+            accessed_time,
+            created_time,
+            mode,
+            hard_links,
+        ) = if let Nfs3Option::Some(attrs) = attrs {
+            let file_type = &attrs.type_;
+            let is_dir = matches!(file_type, nfs3::ftype3::NF3DIR);
+            let is_symlink = matches!(file_type, nfs3::ftype3::NF3LNK);
+
+            // 修改时间 (mtime)
+            let mtime = &attrs.mtime;
+            let modified_duration = Duration::new(u64::from(mtime.seconds), mtime.nseconds);
+            let modified_time = UNIX_EPOCH
+                .checked_add(modified_duration)
+                .unwrap_or(UNIX_EPOCH);
+            let modified: DateTime<Utc> = modified_time.into();
+
+            // 访问时间 (atime)
+            let atime = &attrs.atime;
+            let accessed_duration = Duration::new(u64::from(atime.seconds), atime.nseconds);
+            let accessed_time = UNIX_EPOCH
+                .checked_add(accessed_duration)
+                .unwrap_or(UNIX_EPOCH);
+            let accessed: DateTime<Utc> = accessed_time.into();
+
+            // 创建/状态变更时间 (ctime)
+            let ctime = &attrs.ctime;
+            let created_duration = Duration::new(u64::from(ctime.seconds), ctime.nseconds);
+            let created_time = UNIX_EPOCH
+                .checked_add(created_duration)
+                .unwrap_or(UNIX_EPOCH);
+            let created: DateTime<Utc> = created_time.into();
+
+            // 解析mode字段 - Unix文件权限
+            let mode = attrs.mode;
+            // 硬链接数
+            let hard_links = attrs.nlink as u64;
+
+            (
+                is_dir, is_symlink, attrs.size, modified, accessed, created, mode, hard_links,
+            )
+        } else {
+            (false, false, 0, Utc::now(), Utc::now(), Utc::now(), 0o644, 1)
+        };
+
+        let nfs_fh3 = match &entry.name_handle {
+            Nfs3Option::Some(handle) => handle.clone(),
+            Nfs3Option::None => nfs3::nfs_fh3::default(),
+        };
+
+        let full_path = if dir_path.ends_with('/') {
+            format!("{}{}", dir_path, name)
+        } else {
+            format!("{}/{}", dir_path, name)
+        };
+
+        let storage_entry = crate::StorageEntry {
+            name,
+            path: full_path.clone(),
+            is_dir,
+            size,
+            modified: modified_time.into(),
+            is_symlink: Some(is_symlink),
+            accessed: Some(accessed_time.into()),
+            created: Some(created_time.into()),
+            nfs_fh3: Some(nfs_fh3),
+            mode: Some(format_mode(mode)),
+            hard_links: Some(hard_links),
+        };
+
+        Ok(storage_entry)
+    }
+}
+
+/// 将Unix权限模式转换为rwxrwxrwx格式的字符串
+fn format_mode(mode: u32) -> String {
+    let mut result = String::new();
+
+    // 文件类型
+    let file_type = match mode & 0o170000 {
+        0o040000 => "d",
+        0o100000 => "-",
+        0o120000 => "l",
+        0o020000 => "c",
+        0o060000 => "b",
+        0o010000 => "p",
+        0o140000 => "s",
+        _ => "?",
+    };
+    result.push_str(file_type);
+
+    // 所有者权限
+    result.push(if mode & 0o400 != 0 { 'r' } else { '-' });
+    result.push(if mode & 0o200 != 0 { 'w' } else { '-' });
+    result.push(if mode & 0o100 != 0 {
+        if mode & 0o4000 != 0 {
+            's'
+        } else {
+            'x'
+        }
+    } else {
+        if mode & 0o4000 != 0 {
+            'S'
+        } else {
+            '-'
+        }
+    });
+
+    // 组权限
+    result.push(if mode & 0o040 != 0 { 'r' } else { '-' });
+    result.push(if mode & 0o020 != 0 { 'w' } else { '-' });
+    result.push(if mode & 0o010 != 0 {
+        if mode & 0o2000 != 0 {
+            's'
+        } else {
+            'x'
+        }
+    } else {
+        if mode & 0o2000 != 0 {
+            'S'
+        } else {
+            '-'
+        }
+    });
+
+    // 其他人权限
+    result.push(if mode & 0o004 != 0 { 'r' } else { '-' });
+    result.push(if mode & 0o002 != 0 { 'w' } else { '-' });
+    result.push(if mode & 0o001 != 0 {
+        if mode & 0o1000 != 0 {
+            't'
+        } else {
+            'x'
+        }
+    } else {
+        if mode & 0o1000 != 0 {
+            'T'
+        } else {
+            '-'
+        }
+    });
+
+    result
 }
