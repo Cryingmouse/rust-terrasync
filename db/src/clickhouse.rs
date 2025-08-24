@@ -22,7 +22,7 @@ pub struct FileScanRecord {
     pub is_symlink: bool,
     pub is_dir: bool,
     pub is_regular_file: bool,
-    pub dir_handle: String,
+    pub file_handle: String,
     pub current_state: u8,
 }
 
@@ -51,7 +51,7 @@ const FILE_SCAN_COLUMNS_DEFINITION: &str = r#"
     is_symlink Bool,
     is_dir Bool,
     is_regular_file Bool,
-    dir_handle String,
+    file_handle String,
     current_state UInt8
 "#;
 
@@ -223,12 +223,8 @@ impl ClickHouseDatabase {
         } else {
             columns.join(", ")
         };
-        
-        let query = format!(
-            "SELECT {} FROM {} FINAL",
-            select_columns,
-            table_name
-        );
+
+        let query = format!("SELECT {} FROM {} FINAL", select_columns, table_name);
 
         let rows = self
             .sync_client
@@ -243,10 +239,7 @@ impl ClickHouseDatabase {
     /// 查询scan_state表
     pub async fn query_scan_state_table(&self) -> Result<Vec<(u8, u8)>> {
         let table_name = self.get_scan_state_table_name();
-        let query = format!(
-            "SELECT id, origin_state FROM {} FINAL",
-            table_name
-        );
+        let query = format!("SELECT id, origin_state FROM {} FINAL", table_name);
 
         let rows = self
             .sync_client

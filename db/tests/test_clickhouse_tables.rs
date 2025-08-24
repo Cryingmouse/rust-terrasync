@@ -64,7 +64,9 @@ mod tests {
             result
         );
 
-        let temp_name = db.get_scan_temp_table_name().expect("Should have temporary table name");
+        let temp_name = db
+            .get_scan_temp_table_name()
+            .expect("Should have temporary table name");
         assert!(temp_name.starts_with("temp_files_"));
         assert!(db.get_scan_temp_table_name().is_some());
         assert_eq!(db.get_scan_temp_table_name().unwrap(), temp_name);
@@ -194,7 +196,9 @@ mod tests {
 
         // Clean up and create fresh table
         let _ = db.drop_tables_with_prefix("scan_state_").await;
-        db.create_scan_state_table().await.expect("Failed to create scan state table");
+        db.create_scan_state_table()
+            .await
+            .expect("Failed to create scan state table");
 
         // 测试查询空表的情况 - 应该返回空结果而不是错误
         let result = db.query_scan_state_table().await;
@@ -211,7 +215,9 @@ mod tests {
 
         // Clean up and create fresh table
         let _ = db.drop_tables_with_prefix("scan_base_").await;
-        db.create_scan_base_table().await.expect("Failed to create scan base table");
+        db.create_scan_base_table()
+            .await
+            .expect("Failed to create scan base table");
 
         // 测试查询空表
         let result = db.query_scan_base_table(&[]).await;
@@ -232,20 +238,22 @@ mod tests {
 
         // Clean up any existing tables and create fresh ones
         let _ = db.drop_tables_with_prefix("scan_base_").await;
-        db.create_scan_base_table().await.expect("Failed to create scan base table");
+        db.create_scan_base_table()
+            .await
+            .expect("Failed to create scan base table");
 
         let test_record = FileScanRecord {
             path: "/test/path/file.txt".to_string(),
             size: 1024,
             ext: "txt".to_string(),
-            ctime: 1234567890,  // 使用i64类型的时间戳
+            ctime: 1234567890, // 使用i64类型的时间戳
             mtime: 1234567890,
             atime: 1234567890,
             perm: 0o644,
             is_symlink: false,
             is_dir: false,
             is_regular_file: true,
-            dir_handle: "handle123".to_string(),
+            file_handle: "handle123".to_string(),
             current_state: 1,
         };
 
@@ -258,17 +266,28 @@ mod tests {
         // 使用更合理的等待策略
         let mut attempts = 0;
         let max_attempts = 50; // 增加到50次，最多5秒
-        
+
         loop {
             attempts += 1;
-            
+
             // 查询完整记录，确保所有字段都能正确反序列化
-            let records = db.query_scan_base_table(&[
-                "path", "size", "ext", "ctime", "mtime", "atime", 
-                "perm", "is_symlink", "is_dir", "is_regular_file", 
-                "dir_handle", "current_state"
-            ]).await;
-            
+            let records = db
+                .query_scan_base_table(&[
+                    "path",
+                    "size",
+                    "ext",
+                    "ctime",
+                    "mtime",
+                    "atime",
+                    "perm",
+                    "is_symlink",
+                    "is_dir",
+                    "is_regular_file",
+                    "file_handle",
+                    "current_state",
+                ])
+                .await;
+
             match records {
                 Ok(records) => {
                     if !records.is_empty() {
@@ -284,10 +303,13 @@ mod tests {
                             assert_eq!(found_record.is_symlink, test_record.is_symlink);
                             assert_eq!(found_record.is_dir, test_record.is_dir);
                             assert_eq!(found_record.is_regular_file, test_record.is_regular_file);
-                            assert_eq!(found_record.dir_handle, test_record.dir_handle);
+                            assert_eq!(found_record.file_handle, test_record.file_handle);
                             assert_eq!(found_record.current_state, test_record.current_state);
-                            
-                            println!("Async insert completed successfully after {} attempts", attempts);
+
+                            println!(
+                                "Async insert completed successfully after {} attempts",
+                                attempts
+                            );
                             break;
                         }
                     }
@@ -296,12 +318,15 @@ mod tests {
                     println!("Query error on attempt {}: {}", attempts, e);
                 }
             }
-            
+
             if attempts >= max_attempts {
-                panic!("Timeout waiting for async insert to complete after {} attempts ({}ms)", 
-                       attempts, attempts * 100);
+                panic!(
+                    "Timeout waiting for async insert to complete after {} attempts ({}ms)",
+                    attempts,
+                    attempts * 100
+                );
             }
-            
+
             println!("Waiting for async insert flush... attempt {}", attempts);
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }

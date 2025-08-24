@@ -18,7 +18,7 @@
 - `is_symlink Bool` - 是否为符号链接
 - `is_dir Bool` - 是否为目录
 - `is_regular_file Bool` - 是否为普通文件
-- `dir_handle String` - 目录句柄
+- `file_handle String` - 目录句柄
 - `current_state UInt8` - 当前状态
 
 ### 2. 临时扫描表 (temp_files_{uuid})
