@@ -1,0 +1,26 @@
+# ClickHouse 配置文件模板
+# 根据你的实际ClickHouse服务器信息修改下面的配置
+
+[database]
+enabled = true
+type = "clickhouse"
+batch_size = 200000
+
+[database.clickhouse]
+# 修改为你的ClickHouse服务器地址和端口
+# 常用格式：
+# - TCP协议：tcp://localhost:9000
+# - HTTP协议：http://localhost:8123
+# - HTTPS协议：https://your-server:8123
+dsn = "tcp://10.131.9.20:9000"
+
+# 连接超时时间（秒）
+dial_timeout = 10
+read_timeout = 30
+
+# 数据库名称，如果不指定则使用default
+database = "default"
+
+# 认证信息
+username = "default"
+password = ""

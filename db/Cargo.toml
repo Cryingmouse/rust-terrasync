@@ -1,0 +1,39 @@
+[package]
+name = "db"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clickhouse = { version = "0.12.2", features = ["uuid", "time", "test-util"] }
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+log = "0.4"
+env_logger = "0.11"
+url = "2.0"
+
+# SQLite support
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Error handling
+anyhow = "1.0"
+
+# For database factory registry
+once_cell = "1.19"
+dashmap = "5.5"
+
+# UUID generation
+uuid = { version = "1.0", features = ["v4"] }
+
+# Workspace dependencies
+utils = { path = "../utils" }
+toml = "0.8"
+
+# Logging
+slog = "2.7"
+slog-scope = "4.4"
+
+[dev-dependencies]
+tempfile = "3.0"

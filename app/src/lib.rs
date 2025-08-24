@@ -1,7 +1,7 @@
 extern crate log;
 
-pub mod sync;
 pub mod scan;
+pub mod sync;
 
 use utils::error::Result;
 

@@ -8,13 +8,17 @@ edition = "2021"
 [dependencies]
 utils = { path = "../utils" }
 storage = { path = "../storage" }
+db = { path = "../db" }
 
 rand = "0.9.1"
 log = "0.4.27"
 serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.138"
 tokio = { version = "1.0", features = ["full"] }
 walkdir = "2.4"
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+toml = "0.8"
+async-trait = "0.1.86"
 
 [dev-dependencies]
 tempfile = "3.10"
