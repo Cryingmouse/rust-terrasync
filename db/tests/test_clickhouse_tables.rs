@@ -275,14 +275,14 @@ mod tests {
         // 测试查询空表 - 应该返回错误
         let result = db.query_scan_state_table().await;
         assert!(result.is_err(), "Query should fail for empty table");
-        
+
         // 使用traits定义的接口插入状态数据
         let result = db.insert_scan_state_sync(0).await;
         assert!(result.is_ok(), "Failed to insert test data");
 
         // 验证插入的数据
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        
+
         let result = db.query_scan_state_table().await;
         assert!(result.is_ok(), "Query should succeed after data insertion");
 
@@ -351,56 +351,29 @@ mod tests {
             current_state: 1,
         };
 
-        // 使用同步插入
-        let insert_sql = format!(
-            "INSERT INTO {} (path, size, ext, ctime, mtime, atime, perm, is_symlink, is_dir, is_regular_file, file_handle, current_state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            format!("scan_base_{}", job_id)
-        );
-
-        let result = db
-            .execute(
-                &insert_sql,
-                &[
-                    serde_json::Value::String(test_record.path.clone()),
-                    serde_json::Value::Number(test_record.size.into()),
-                    serde_json::Value::String(test_record.ext.clone().unwrap_or_default()),
-                    serde_json::Value::Number(test_record.ctime.into()),
-                    serde_json::Value::Number(test_record.mtime.into()),
-                    serde_json::Value::Number(test_record.atime.into()),
-                    serde_json::Value::Number(test_record.perm.into()),
-                    serde_json::Value::Bool(test_record.is_symlink),
-                    serde_json::Value::Bool(test_record.is_dir),
-                    serde_json::Value::Bool(test_record.is_regular_file),
-                    serde_json::Value::String(test_record.file_handle.clone().unwrap_or_default()),
-                    serde_json::Value::Number(test_record.current_state.into()),
-                ],
-            )
-            .await;
+        // 使用trait接口异步插入
+        let result = db.insert_file_record_async(test_record.clone()).await;
 
         assert!(result.is_ok(), "Failed to insert record: {:?}", result);
 
         // 验证数据插入成功
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        let query_sql = format!(
-            "SELECT count(*) FROM {} WHERE path = ?",
-            format!("scan_base_{}", job_id)
-        );
+        // 使用trait接口查询验证数据
+        let records = db.query_scan_base_table(&[]).await;
+        assert!(records.is_ok(), "Failed to query records: {:?}", records);
 
-        let result = db
-            .execute(
-                &query_sql,
-                &[serde_json::Value::String(
-                    "/test/path/test_file.txt".to_string(),
-                )],
-            )
-            .await;
+        let records = records.unwrap();
+        let found_record = records
+            .iter()
+            .find(|r| r.path == "/test/path/test_file.txt");
 
         assert!(
-            result.is_ok(),
-            "Failed to query inserted record: {:?}",
-            result
+            found_record.is_some(),
+            "Inserted record not found in database"
         );
+        assert_eq!(found_record.unwrap().size, 1024);
+
         println!("Successfully inserted and verified file record");
 
         // 测试结束后清理

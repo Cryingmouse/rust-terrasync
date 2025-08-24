@@ -245,7 +245,7 @@ impl Database for ClickHouseDatabase {
     }
 
     async fn table_exists(&self, table_name: &str) -> Result<bool> {
-        println!("Checking if ClickHouse table exists: {}", table_name);
+        debug!("Checking if ClickHouse table exists: {}", table_name);
 
         let query = format!(
             "SELECT count(*) FROM system.tables WHERE name = '{}'",
@@ -263,7 +263,7 @@ impl Database for ClickHouseDatabase {
     }
 
     async fn close(&self) -> Result<()> {
-        println!("Closing ClickHouse connection...");
+        debug!("Closing ClickHouse connection...");
         Ok(()) // Mock implementation
     }
 
@@ -420,5 +420,21 @@ impl Database for ClickHouseDatabase {
             })?;
 
         Ok(origin_state)
+    }
+
+    /// 切换scan_state表状态
+    async fn switch_scan_state(&self) -> Result<()> {
+        // 查询当前状态
+        let current_state = self.query_scan_state_table().await?;
+
+        // 反转状态（1 - 当前状态）
+        let new_state = 1 - current_state;
+
+        // 调用insert_scan_state_sync设置新状态
+        self.insert_scan_state_sync(new_state).await?;
+
+        debug!("Switched scan state: {} -> {}", current_state, new_state);
+
+        Ok(())
     }
 }

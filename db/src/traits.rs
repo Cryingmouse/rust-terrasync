@@ -86,4 +86,7 @@ pub trait Database: Send + Sync {
 
     /// 查询scan_state表
     async fn query_scan_state_table(&self) -> Result<u8>;
+
+    /// 切换scan_state表状态
+    async fn switch_scan_state(&self) -> Result<()>;
 }
