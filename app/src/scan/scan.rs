@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::SystemTime;
-use storage::StorageType;
+use storage::Storage;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use utils::error::Result;
@@ -238,12 +238,8 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
         )
     })?;
 
-    // 根据存储类型获取对应的遍历器
-    let mut rx = match storage_type {
-        StorageType::Local(local_storage) => local_storage.walkdir(None, depth).await,
-        StorageType::NFS(nfsstorage) => nfsstorage.walkdir(depth).await,
-        StorageType::S3(s3_storage) => s3_storage.walkdir(depth).await,
-    };
+    // 使用Storage trait的统一接口获取遍历器
+    let mut rx = storage_type.walkdir(None, depth).await;
 
     // 创建定时器，每10秒发送一次统计更新
     let mut stats_timer = interval(Duration::from_secs(10));
