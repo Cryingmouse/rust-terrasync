@@ -1,31 +1,14 @@
 use async_trait::async_trait;
 use clickhouse::Client;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slog_scope::debug;
 
 use crate::config::ClickHouseConfig;
 use crate::error::{DatabaseError, Result};
-use crate::traits::{Database, QueryResult, TableSchema};
+use crate::traits::FileScanRecord;
+use crate::traits::{Database, QueryResult};
 use crate::{generate_scan_temp_table_name, get_scan_base_table_name, get_scan_state_table_name};
-use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME, SCAN_TEMP_TABLE_BASE_NAME};
-
-/// 文件扫描事件结构体 - 用于异步插入
-#[derive(Debug, Clone, Serialize, Deserialize, clickhouse::Row)]
-pub struct FileScanRecord {
-    pub path: String,
-    pub size: i64,
-    pub ext: String,
-    pub ctime: i64, // 恢复为i64类型
-    pub mtime: i64, // 恢复为i64类型
-    pub atime: i64, // 恢复为i64类型
-    pub perm: u32,
-    pub is_symlink: bool,
-    pub is_dir: bool,
-    pub is_regular_file: bool,
-    pub file_handle: String,
-    pub current_state: u8,
-}
+use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME};
 
 pub struct ClickHouseDatabase {
     config: ClickHouseConfig,
@@ -38,16 +21,16 @@ pub struct ClickHouseDatabase {
 /// 文件扫描记录的标准列定义
 const FILE_SCAN_COLUMNS_DEFINITION: &str = r#"
     path String,
-    size Int64,
-    ext String,
-    ctime DateTime64(3),
-    mtime DateTime64(3),
-    atime DateTime64(3),
+    size UInt64,
+    ext Nullable(String),
+    ctime UInt64,
+    mtime UInt64,
+    atime UInt64,
     perm UInt32,
-    is_symlink Bool,
-    is_dir Bool,
-    is_regular_file Bool,
-    file_handle String,
+    is_symlink UInt8,
+    is_dir UInt8,
+    is_regular_file UInt8,
+    file_handle Nullable(String),
     current_state UInt8
 "#;
 
@@ -156,28 +139,6 @@ impl ClickHouseDatabase {
         Ok(dropped_tables)
     }
 
-    /// 异步插入单个文件扫描事件
-    pub async fn insert_file_record_async(&self, event: FileScanRecord) -> Result<()> {
-        let table_name = get_scan_base_table_name(&self.job_id);
-        let mut insert = self
-            .async_client
-            .insert::<FileScanRecord>(&table_name)
-            .map_err(|e| DatabaseError::ClickHouseError(e))?;
-
-        insert
-            .write(&event)
-            .await
-            .map_err(|e| DatabaseError::ClickHouseError(e))?;
-
-        insert
-            .end()
-            .await
-            .map_err(|e| DatabaseError::ClickHouseError(e))?;
-
-        debug!("Async inserted 1 file event");
-        Ok(())
-    }
-
     /// 同步插入scan_state表，id固定为1
     pub async fn insert_scan_state_sync(&self, origin_state: u8) -> Result<()> {
         let table_name = get_scan_state_table_name(&self.job_id);
@@ -202,47 +163,11 @@ impl ClickHouseDatabase {
         );
         Ok(())
     }
-
-    /// 查询scan_base表，支持指定列查询，使用FINAL关键字
-    pub async fn query_scan_base_table(&self, columns: &[&str]) -> Result<Vec<FileScanRecord>> {
-        let table_name = get_scan_base_table_name(&self.job_id);
-        let select_columns = if columns.is_empty() {
-            "*".to_string()
-        } else {
-            columns.join(", ")
-        };
-
-        let query = format!("SELECT {} FROM {} FINAL", select_columns, table_name);
-
-        let rows = self
-            .sync_client
-            .query(&query)
-            .fetch_all::<FileScanRecord>()
-            .await
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
-
-        Ok(rows)
-    }
-
-    /// 查询scan_state表
-    pub async fn query_scan_state_table(&self) -> Result<Vec<(u8, u8)>> {
-        let table_name = get_scan_state_table_name(&self.job_id);
-        let query = format!("SELECT id, origin_state FROM {} FINAL", table_name);
-
-        let rows = self
-            .sync_client
-            .query(&query)
-            .fetch_all::<(u8, u8)>()
-            .await
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
-
-        Ok(rows)
-    }
 }
 
 #[async_trait]
 impl Database for ClickHouseDatabase {
-    async fn initialize(&self) -> Result<()> {
+    async fn ping(&self) -> Result<()> {
         debug!("Initializing ClickHouse connection to: {}", self.config.dsn);
 
         // 测试连接
@@ -256,37 +181,37 @@ impl Database for ClickHouseDatabase {
         Ok(())
     }
 
-    async fn query(&self, sql: &str, params: &[Value]) -> Result<QueryResult> {
-        debug!("Executing ClickHouse query: {}", sql);
-
-        let mut query = self.sync_client.query(sql);
-
-        // 绑定参数
-        for param in params {
-            if let Some(s) = param.as_str() {
-                query = query.bind(s);
-            } else if let Some(n) = param.as_i64() {
-                query = query.bind(n);
-            } else if let Some(b) = param.as_bool() {
-                query = query.bind(b);
-            } else {
-                query = query.bind(param.to_string());
+    async fn create_table(&self, table_name: &str) -> Result<()> {
+        // 根据表名调用相应的创建方法
+        match table_name {
+            SCAN_BASE_TABLE_BASE_NAME => self.create_scan_base_table().await,
+            SCAN_STATE_TABLE_BASE_NAME => self.create_scan_state_table().await,
+            _ => {
+                // 通用表创建 - 对于未知表名，直接返回错误
+                Err(DatabaseError::UnsupportedType(format!(
+                    "Unknown table: {}",
+                    table_name
+                )))
             }
         }
+    }
 
-        // 使用简化方式获取结果
-        let _rows = query
-            .fetch_all::<Vec<(String, String)>>()
-            .await
-            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
-
-        // 转换结果格式 - 这里简化处理，返回空结果
-        // 在实际应用中，需要根据具体表结构来处理
-        Ok(QueryResult {
-            rows: Vec::new(),
-            affected_rows: 0,
-            last_insert_id: None,
-        })
+    async fn drop_table(&self, table_name: &str) -> Result<()> {
+        // 根据表名调用相应的删除方法
+        match table_name {
+            SCAN_BASE_TABLE_BASE_NAME => {
+                self.drop_table_by_name(&get_scan_base_table_name(&self.job_id))
+                    .await
+            }
+            SCAN_STATE_TABLE_BASE_NAME => {
+                self.drop_table_by_name(&get_scan_state_table_name(&self.job_id))
+                    .await
+            }
+            _ => {
+                // 通用表删除 - 对于未知表名，直接删除指定表名
+                self.drop_table_by_name(table_name).await
+            }
+        }
     }
 
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<QueryResult> {
@@ -319,22 +244,6 @@ impl Database for ClickHouseDatabase {
         })
     }
 
-    async fn execute_batch(
-        &self, sql: &str, params_batch: &[Vec<Value>],
-    ) -> Result<Vec<QueryResult>> {
-        debug!(
-            "Executing ClickHouse batch: {} with {} sets of parameters",
-            sql,
-            params_batch.len()
-        );
-
-        let mut results = Vec::new();
-        for _ in params_batch {
-            results.push(self.execute(sql, &[]).await?);
-        }
-        Ok(results)
-    }
-
     async fn table_exists(&self, table_name: &str) -> Result<bool> {
         println!("Checking if ClickHouse table exists: {}", table_name);
 
@@ -351,32 +260,6 @@ impl Database for ClickHouseDatabase {
             .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
 
         Ok(count > 0)
-    }
-
-    async fn create_table(&self, schema: &TableSchema) -> Result<()> {
-        // 根据表名调用相应的创建方法
-        match schema.name.as_str() {
-            SCAN_BASE_TABLE_BASE_NAME => self.create_scan_base_table().await,
-            SCAN_STATE_TABLE_BASE_NAME => self.create_scan_state_table().await,
-            SCAN_TEMP_TABLE_BASE_NAME => {
-                // 临时表创建需要可变引用，通过通用接口不支持
-                Err(DatabaseError::UnsupportedType(
-                    "Temporary table creation requires mutable reference. Use create_scan_temporary_table() instead.".to_string()
-                ))
-            }
-            _ => {
-                // 通用表创建 - 对于未知表名，直接返回错误
-                Err(DatabaseError::UnsupportedType(format!(
-                    "Unknown table: {}",
-                    schema.name
-                )))
-            }
-        }
-    }
-
-    async fn ping(&self) -> Result<()> {
-        println!("Pinging ClickHouse server...");
-        Ok(()) // Mock implementation
     }
 
     async fn close(&self) -> Result<()> {
@@ -428,36 +311,40 @@ impl Database for ClickHouseDatabase {
         Ok(())
     }
 
-    async fn batch_insert_temp_record_sync(&self, events: Vec<serde_json::Value>) -> Result<()> {
+    async fn batch_insert_temp_record_sync(&self, records: Vec<FileScanRecord>) -> Result<()> {
         let temp_table_name = self.scan_temp_table_name.as_deref().ok_or_else(|| {
             DatabaseError::UnsupportedType("No temporary table available".to_string())
         })?;
 
-        if events.is_empty() {
+        if records.is_empty() {
             debug!("No events to insert");
             return Ok(());
         }
 
-        // Convert JSON values to FileScanRecord
-        let records: Vec<FileScanRecord> = events
-            .into_iter()
-            .map(|event| serde_json::from_value(event).map_err(DatabaseError::SerializationError))
-            .collect::<Result<Vec<_>>>()?;
-
         let record_count = records.len();
+
+        // 使用标准insert方法进行批量插入
         let mut insert = self
             .sync_client
-            .insert::<FileScanRecord>(&temp_table_name)
+            .insert(temp_table_name)
             .map_err(|e| DatabaseError::ClickHouseError(e))?;
 
+        // 批量写入所有记录
         for record in &records {
-            insert.write(record).await?;
+            insert
+                .write(record)
+                .await
+                .map_err(|e| DatabaseError::ClickHouseError(e))?;
         }
 
-        insert.end().await?;
+        // 确保最终完成
+        insert
+            .end()
+            .await
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
 
         debug!(
-            "Synchronously inserted {} events to temporary table",
+            "Successfully inserted {} events to temporary table",
             record_count
         );
         Ok(())
@@ -466,5 +353,72 @@ impl Database for ClickHouseDatabase {
     /// 获取当前临时表名
     fn get_scan_temp_table_name(&self) -> Option<&str> {
         self.scan_temp_table_name.as_deref()
+    }
+
+    /// 异步插入单个文件扫描事件
+    async fn insert_file_record_async(&self, record: FileScanRecord) -> Result<()> {
+        let table_name = get_scan_base_table_name(&self.job_id);
+        let mut insert = self
+            .async_client
+            .insert::<FileScanRecord>(&table_name)
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+
+        insert
+            .write(&record)
+            .await
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+
+        insert
+            .end()
+            .await
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+
+        debug!("Async inserted 1 file event");
+        Ok(())
+    }
+
+    /// 查询scan_base表，支持指定列查询，使用FINAL关键字
+    async fn query_scan_base_table(&self, columns: &[&str]) -> Result<Vec<FileScanRecord>> {
+        let table_name = get_scan_base_table_name(&self.job_id);
+        let select_columns = if columns.is_empty() {
+            "*".to_string()
+        } else {
+            columns.join(", ")
+        };
+
+        let query = format!("SELECT {} FROM {} FINAL", select_columns, table_name);
+
+        let rows = self
+            .sync_client
+            .query(&query)
+            .fetch_all::<FileScanRecord>()
+            .await
+            .map_err(|e| DatabaseError::QueryError(e.to_string()))?;
+
+        Ok(rows)
+    }
+
+    /// 查询scan_state表，返回id=1的origin_state值
+    /// 当记录不存在时返回错误
+    async fn query_scan_state_table(&self) -> Result<u8> {
+        let table_name = get_scan_state_table_name(&self.job_id);
+        let query = format!("SELECT origin_state FROM {} FINAL WHERE id = 1", table_name);
+
+        let origin_state = self
+            .sync_client
+            .query(&query)
+            .fetch_one::<u8>()
+            .await
+            .map_err(|e| match e {
+                clickhouse::error::Error::RowNotFound => {
+                    DatabaseError::QueryError("No scan state record found for id=1".to_string())
+                }
+                _ => DatabaseError::QueryError(format!(
+                    "Failed to query scan_state table: {}",
+                    e.to_string()
+                )),
+            })?;
+
+        Ok(origin_state)
     }
 }

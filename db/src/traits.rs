@@ -1,13 +1,12 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 
 use crate::error::Result;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueryResult {
-    pub rows: Vec<HashMap<String, Value>>,
+    pub rows: Vec<serde_json::Value>,
     pub affected_rows: u64,
     pub last_insert_id: Option<u64>,
 }
@@ -27,30 +26,39 @@ pub struct ColumnInfo {
     pub is_primary_key: bool,
 }
 
+/// 文件扫描事件结构体 - 统一的数据结构
+#[derive(Debug, Clone, Serialize, Deserialize, clickhouse::Row)]
+pub struct FileScanRecord {
+    pub path: String,
+    pub size: u64,
+    pub ext: Option<String>,
+    pub ctime: u64,
+    pub mtime: u64,
+    pub atime: u64,
+    pub perm: u32,
+    pub is_symlink: bool,
+    pub is_dir: bool,
+    pub is_regular_file: bool,
+    pub file_handle: Option<String>,
+    pub current_state: u8,
+}
+
 #[async_trait]
 pub trait Database: Send + Sync {
-    /// Initialize database connection
-    async fn initialize(&self) -> Result<()>;
+    /// Ping database to check connection
+    async fn ping(&self) -> Result<()>;
 
-    /// Execute a query and return results
-    async fn query(&self, sql: &str, params: &[Value]) -> Result<QueryResult>;
+    /// Create table by name
+    async fn create_table(&self, table_name: &str) -> Result<()>;
+
+    /// Drop table by name
+    async fn drop_table(&self, table_name: &str) -> Result<()>;
 
     /// Execute a query without returning results (INSERT, UPDATE, DELETE)
     async fn execute(&self, sql: &str, params: &[Value]) -> Result<QueryResult>;
 
-    /// Execute batch queries
-    async fn execute_batch(
-        &self, sql: &str, params_batch: &[Vec<Value>],
-    ) -> Result<Vec<QueryResult>>;
-
     /// Check if table exists
     async fn table_exists(&self, table_name: &str) -> Result<bool>;
-
-    /// Create table from schema
-    async fn create_table(&self, schema: &TableSchema) -> Result<()>;
-
-    /// Ping database to check connection
-    async fn ping(&self) -> Result<()>;
 
     /// Close database connection
     async fn close(&self) -> Result<()>;
@@ -59,14 +67,23 @@ pub trait Database: Send + Sync {
     fn database_type(&self) -> &'static str;
 
     /// 创建临时扫描表
-    /// 在内部维护临时表名，不返回表名
     async fn create_scan_temporary_table(&mut self) -> Result<()>;
 
     /// 删除当前临时表
     async fn drop_scan_temporary_table(&mut self) -> Result<()>;
 
     /// 同步批量插入数据到临时表
-    async fn batch_insert_temp_record_sync(&self, events: Vec<serde_json::Value>) -> Result<()>;
+    async fn batch_insert_temp_record_sync(&self, records: Vec<FileScanRecord>) -> Result<()>;
 
+    /// 获取当前临时表名
     fn get_scan_temp_table_name(&self) -> Option<&str>;
+
+    /// 异步插入单个文件扫描事件到scan_base表
+    async fn insert_file_record_async(&self, event: FileScanRecord) -> Result<()>;
+
+    /// 查询scan_base表，支持指定列查询
+    async fn query_scan_base_table(&self, columns: &[&str]) -> Result<Vec<FileScanRecord>>;
+
+    /// 查询scan_state表
+    async fn query_scan_state_table(&self) -> Result<u8>;
 }

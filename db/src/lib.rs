@@ -2,7 +2,6 @@ pub mod clickhouse;
 pub mod config;
 pub mod error;
 pub mod factory;
-pub mod sqlite;
 pub mod traits;
 
 // 共享的表名常量
@@ -11,10 +10,9 @@ pub const SCAN_TEMP_TABLE_BASE_NAME: &str = "scan_temp";
 pub const SCAN_STATE_TABLE_BASE_NAME: &str = "scan_state";
 
 pub use clickhouse::ClickHouseDatabase;
-pub use config::{ClickHouseConfig, DatabaseConfig, DatabaseType, SQLiteConfig};
+pub use config::{ClickHouseConfig, DatabaseConfig, DatabaseType};
 pub use error::{DatabaseError, Result};
 pub use factory::{create_database, DatabaseFactory};
-pub use sqlite::SQLiteDatabase;
 pub use traits::{ColumnInfo, Database, QueryResult, TableSchema};
 
 /// 根据job_id生成扫描基础表名

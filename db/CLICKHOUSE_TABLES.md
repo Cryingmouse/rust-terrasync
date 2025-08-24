@@ -47,7 +47,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let db = ClickHouseDatabase::new(config);
-    db.initialize().await?;
+    db.ping().await?;
 
     // 方法1：一次性创建所有表（不包含临时表）
     db.create_all_scan_tables().await?;

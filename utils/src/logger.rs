@@ -10,6 +10,7 @@ use slog_syslog::Facility;
 use std::fs::OpenOptions;
 
 use super::error::Result;
+#[cfg(not(test))]
 use crate::app_config::AppConfig;
 
 pub fn setup_logging() -> Result<slog_scope::GlobalLoggerGuard> {
