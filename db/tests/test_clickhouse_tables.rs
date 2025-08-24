@@ -3,11 +3,25 @@ mod tests {
     use db::clickhouse::{ClickHouseDatabase, FileScanRecord};
     use db::config::ClickHouseConfig;
     use db::Database;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     // 注意：这些测试需要实际的ClickHouse服务器运行
     // 在CI环境中可能需要跳过或使用mock
 
-    fn setup_test_db() -> ClickHouseDatabase {
+    // 使用原子计数器确保每个测试用例都有唯一的job_id
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    fn generate_unique_job_id(prefix: &str) -> String {
+        let counter = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        format!("{}_{}_{}", prefix, counter, timestamp)
+    }
+
+    fn setup_test_db_with_job_id(job_id: &str) -> ClickHouseDatabase {
         let config = ClickHouseConfig {
             dsn: "http://10.131.9.20:8123".to_string(),
             dial_timeout: 10,
@@ -17,12 +31,32 @@ mod tests {
             password: None,
         };
 
-        ClickHouseDatabase::new(config, "test_job".to_string())
+        ClickHouseDatabase::new(config, job_id.to_string())
+    }
+
+    // 测试清理辅助函数
+    async fn cleanup_test_tables(
+        db: &ClickHouseDatabase, job_id: &str,
+    ) -> Result<(), db::error::DatabaseError> {
+        // 清理该测试用例创建的所有表
+        let base_table = format!("scan_base_{}", job_id);
+        let state_table = format!("scan_state_{}", job_id);
+
+        let _ = db.drop_table_by_name(&base_table).await;
+        let _ = db.drop_table_by_name(&state_table).await;
+
+        // 清理临时表（如果有）
+        let _ = db
+            .drop_tables_with_prefix(&format!("temp_files_{}_", job_id))
+            .await;
+
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_create_scan_base_table() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_base");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
@@ -33,11 +67,15 @@ mod tests {
             "Failed to create scan base table: {:?}",
             result
         );
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 
     #[tokio::test]
     async fn test_create_scan_state_table() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_state");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
@@ -48,11 +86,15 @@ mod tests {
             "Failed to create scan state table: {:?}",
             result
         );
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 
     #[tokio::test]
     async fn test_create_scan_temporary_table() {
-        let mut db = setup_test_db();
+        let job_id = generate_unique_job_id("test_temp");
+        let mut db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
@@ -70,11 +112,15 @@ mod tests {
         assert!(temp_name.starts_with("temp_files_"));
         assert!(db.get_scan_temp_table_name().is_some());
         assert_eq!(db.get_scan_temp_table_name().unwrap(), temp_name);
+
+        // 测试结束后清理临时表
+        let _ = db.drop_scan_temporary_table().await;
     }
 
     #[tokio::test]
     async fn test_create_all_tables_individually() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_all");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
@@ -92,11 +138,15 @@ mod tests {
             "Failed to create scan state table: {:?}",
             result
         );
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 
     #[tokio::test]
     async fn test_drop_scan_temporary_table() {
-        let mut db = setup_test_db();
+        let job_id = generate_unique_job_id("test_drop_temp");
+        let mut db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
@@ -124,12 +174,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_drop_table_by_name() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_drop");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        let table_name = "test_drop_table";
+        let table_name = format!("test_drop_table_{}", job_id);
 
         // 先创建测试表
         let create_sql = format!(
@@ -141,18 +192,19 @@ mod tests {
             .expect("Failed to create test table");
 
         // 再删除表
-        let result = db.drop_table_by_name(table_name).await;
+        let result = db.drop_table_by_name(&table_name).await;
         assert!(result.is_ok(), "Failed to drop table by name: {:?}", result);
     }
 
     #[tokio::test]
     async fn test_drop_tables_with_prefix() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_prefix");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        let prefix = "test_prefix_";
+        let prefix = format!("test_prefix_{}_", job_id);
         let table1 = format!("{}table1", prefix);
         let table2 = format!("{}table2", prefix);
 
@@ -174,7 +226,7 @@ mod tests {
             .expect("Failed to create test table2");
 
         // 删除前缀表
-        let result = db.drop_tables_with_prefix(prefix).await;
+        let result = db.drop_tables_with_prefix(&prefix).await;
         assert!(
             result.is_ok(),
             "Failed to drop tables with prefix: {:?}",
@@ -189,13 +241,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_scan_state_table() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_query_state");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        // Clean up and create fresh table
-        let _ = db.drop_tables_with_prefix("scan_state_").await;
+        // 创建新的状态表（使用唯一job_id，无需清理其他表）
         db.create_scan_state_table()
             .await
             .expect("Failed to create scan state table");
@@ -203,18 +255,20 @@ mod tests {
         // 测试查询空表的情况 - 应该返回空结果而不是错误
         let result = db.query_scan_state_table().await;
         assert!(result.is_ok(), "Query should succeed even for empty table");
-        // 不检查具体行数，只验证查询成功
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 
     #[tokio::test]
     async fn test_query_scan_base_table() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_query_base");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        // Clean up and create fresh table
-        let _ = db.drop_tables_with_prefix("scan_base_").await;
+        // 创建新的基础表（使用唯一job_id，无需清理其他表）
         db.create_scan_base_table()
             .await
             .expect("Failed to create scan base table");
@@ -222,22 +276,24 @@ mod tests {
         // 测试查询空表
         let result = db.query_scan_base_table(&[]).await;
         assert!(result.is_ok(), "Query should succeed even for empty table");
-        // 不检查具体行数，只验证查询成功
 
         // 测试查询指定列
         let result = db.query_scan_base_table(&["path", "size"]).await;
         assert!(result.is_ok(), "Query with specific columns should succeed");
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 
     #[tokio::test]
     async fn test_insert_file_record_async() {
-        let db = setup_test_db();
+        let job_id = generate_unique_job_id("test_insert_async");
+        let db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        // Clean up any existing tables and create fresh ones
-        let _ = db.drop_tables_with_prefix("scan_base_").await;
+        // 创建新的基础表（使用唯一job_id，无需清理其他表）
         db.create_scan_base_table()
             .await
             .expect("Failed to create scan base table");
@@ -330,18 +386,20 @@ mod tests {
             println!("Waiting for async insert flush... attempt {}", attempts);
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 
     #[tokio::test]
     async fn test_batch_insert_temp_table() {
-        let mut db = setup_test_db();
+        let job_id = generate_unique_job_id("test_batch_temp");
+        let mut db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        // 清理并创建新的临时表
-        let _ = db.drop_scan_temporary_table().await;
-        let _ = db.drop_tables_with_prefix("temp_files_").await; // 额外清理可能存在的临时表
+        // 创建新的临时表（使用唯一job_id，无需清理其他表）
         db.create_scan_temporary_table()
             .await
             .expect("Failed to create scan temporary table");
@@ -389,30 +447,38 @@ mod tests {
                 "is_regular_file": false,
                 "file_handle": "handle123",
                 "current_state": 1
-            })
+            }),
         ];
 
         // 测试批量插入
         let result = db.batch_insert_temp_record_sync(test_records.clone()).await;
-        assert!(result.is_ok(), "Failed to batch insert temp records: {:?}", result);
-        
-        println!("Successfully inserted {} records to temporary table", test_records.len());
+        assert!(
+            result.is_ok(),
+            "Failed to batch insert temp records: {:?}",
+            result
+        );
 
-        // 测试结束后清理表格
+        println!(
+            "Successfully inserted {} records to temporary table",
+            test_records.len()
+        );
+
+        // 测试结束后清理
         let _ = db.drop_scan_temporary_table().await;
-        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        let _ = db
+            .drop_tables_with_prefix(&format!("temp_files_{}_", job_id))
+            .await;
     }
 
     #[tokio::test]
     async fn test_batch_insert_empty_temp_table() {
-        let mut db = setup_test_db();
+        let job_id = generate_unique_job_id("test_empty_batch");
+        let mut db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        // 清理并创建新的临时表
-        let _ = db.drop_scan_temporary_table().await;
-        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        // 创建新的临时表（使用唯一job_id，无需清理其他表）
         db.create_scan_temporary_table()
             .await
             .expect("Failed to create scan temporary table");
@@ -420,32 +486,38 @@ mod tests {
         // 测试空数据批量插入
         let empty_records = vec![];
         let result = db.batch_insert_temp_record_sync(empty_records).await;
-        assert!(result.is_ok(), "Empty batch insert should succeed: {:?}", result);
-        
+        assert!(
+            result.is_ok(),
+            "Empty batch insert should succeed: {:?}",
+            result
+        );
+
         println!("Empty batch insert test passed");
 
-        // 测试结束后清理表格
+        // 测试结束后清理
         let _ = db.drop_scan_temporary_table().await;
-        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        let _ = db
+            .drop_tables_with_prefix(&format!("temp_files_{}_", job_id))
+            .await;
     }
 
     #[tokio::test]
     async fn test_batch_insert_large_temp_table() {
-        let mut db = setup_test_db();
+        let job_id = generate_unique_job_id("test_large_batch");
+        let mut db = setup_test_db_with_job_id(&job_id);
         db.initialize()
             .await
             .expect("Failed to initialize database");
 
-        // 清理并创建新的临时表
-        let _ = db.drop_scan_temporary_table().await;
-        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        // 创建新的临时表（使用唯一job_id，无需清理其他表）
         db.create_scan_temporary_table()
             .await
             .expect("Failed to create scan temporary table");
 
         // 准备大量测试数据 - 使用合适的整数时间戳
         let mut large_records = Vec::new();
-        for i in 0..50 { // 50条记录
+        for i in 0..50 {
+            // 50条记录
             large_records.push(serde_json::json!({
                 "path": format!("/test/path/file_{}.txt", i),
                 "size": 1024 + (i * 100),
@@ -464,15 +536,64 @@ mod tests {
 
         // 测试大批量插入
         let start_time = std::time::Instant::now();
-        let result = db.batch_insert_temp_record_sync(large_records.clone()).await;
+        let result = db
+            .batch_insert_temp_record_sync(large_records.clone())
+            .await;
         let duration = start_time.elapsed();
-        
-        assert!(result.is_ok(), "Large batch insert should succeed: {:?}", result);
-        
-        println!("Successfully inserted {} records in {:?}", large_records.len(), duration);
 
-        // 测试结束后清理表格
+        assert!(
+            result.is_ok(),
+            "Large batch insert should succeed: {:?}",
+            result
+        );
+
+        println!(
+            "Successfully inserted {} records in {:?}",
+            large_records.len(),
+            duration
+        );
+
+        // 测试结束后清理
         let _ = db.drop_scan_temporary_table().await;
-        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        let _ = db
+            .drop_tables_with_prefix(&format!("temp_files_{}_", job_id))
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_insert_scan_state_sync() {
+        let job_id = generate_unique_job_id("test_insert_state");
+        let db = setup_test_db_with_job_id(&job_id);
+        db.initialize()
+            .await
+            .expect("Failed to initialize database");
+
+        // 创建新的scan_state表（使用唯一job_id，无需清理其他表）
+        db.create_scan_state_table()
+            .await
+            .expect("Failed to create scan state table");
+
+        // 测试插入scan_state记录
+        let result = db.insert_scan_state_sync(5).await;
+        assert!(result.is_ok(), "Failed to insert scan state: {:?}", result);
+
+        // 验证数据已插入（只验证有数据，不验证具体值）
+        let records = db.query_scan_state_table().await;
+        assert!(records.is_ok(), "Failed to query scan state table");
+
+        let state_records = records.unwrap();
+        assert!(!state_records.is_empty(), "Should have at least one record");
+
+        // 验证有id=1的记录
+        let record = state_records.iter().find(|&&(id, _)| id == 1);
+        assert!(record.is_some(), "Should have record with id=1");
+
+        println!(
+            "Successfully inserted scan state: id=1, origin_state={}",
+            record.unwrap().1
+        );
+
+        // 测试结束后清理
+        let _ = cleanup_test_tables(&db, &job_id).await;
     }
 }
