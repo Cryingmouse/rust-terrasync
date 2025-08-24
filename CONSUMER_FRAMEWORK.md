@@ -67,7 +67,7 @@ use app::scan::{ScanParams, scan};
 let config = ConsumerConfig {
     enable_log_consumer: true,
     enable_database_consumer: true,
-    enable_notification_consumer: false,
+    enable_kafka_consumer: false,
     channel_capacity: 5000,
 };
 
@@ -87,7 +87,7 @@ let mut manager = ConsumerManager::with_config(&config);
 |--------|------|--------|------|
 | enable_log_consumer | bool | true | 启用日志消费者 |
 | enable_database_consumer | bool | false | 启用数据库消费者 |
-| enable_notification_consumer | bool | false | 启用通知消费者 |
+| enable_kafka_consumer | bool | false | 启用通知消费者 |
 | channel_capacity | usize | 10000 | 广播通道容量 |
 
 ### 预设配置

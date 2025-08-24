@@ -8,7 +8,7 @@ pub struct ConsumerConfig {
     /// 是否启用数据库消费者
     pub enable_database_consumer: bool,
     /// 是否启用通知消费者
-    pub enable_notification_consumer: bool,
+    pub enable_kafka_consumer: bool,
     /// 消费者通道容量
     pub channel_capacity: usize,
 }
@@ -18,7 +18,7 @@ impl Default for ConsumerConfig {
         Self {
             enable_log_consumer: true,
             enable_database_consumer: false,
-            enable_notification_consumer: false,
+            enable_kafka_consumer: false,
             channel_capacity: 10000,
         }
     }
@@ -30,7 +30,7 @@ impl ConsumerConfig {
         Self {
             enable_log_consumer: true,
             enable_database_consumer: false,
-            enable_notification_consumer: false,
+            enable_kafka_consumer: false,
             ..Default::default()
         }
     }
@@ -40,22 +40,20 @@ impl ConsumerConfig {
         Self {
             enable_log_consumer: true,
             enable_database_consumer: true,
-            enable_notification_consumer: true,
+            enable_kafka_consumer: true,
             ..Default::default()
         }
     }
 
     /// 创建自定义配置
     pub fn new(
-        enable_log_consumer: bool,
-        enable_database_consumer: bool,
-        enable_notification_consumer: bool,
+        enable_log_consumer: bool, enable_database_consumer: bool, enable_kafka_consumer: bool,
         channel_capacity: usize,
     ) -> Self {
         Self {
             enable_log_consumer,
             enable_database_consumer,
-            enable_notification_consumer,
+            enable_kafka_consumer,
             channel_capacity,
         }
     }
