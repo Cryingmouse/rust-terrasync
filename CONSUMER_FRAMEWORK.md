@@ -1,5 +1,105 @@
 # Consumer Framework 使用指南
 
+这个consumer框架提供了一个灵活的方式来注册和管理多个消息消费者，支持基于广播的消费者模型，允许多个消费者同时处理扫描结果。
+
+## 新的广播消费者框架（v2.0）
+
+基于tokio::sync::broadcast实现的消费者管理框架，支持实时消息广播到多个消费者。
+
+### 核心组件
+
+#### 1. ConsumerManager
+管理所有消费者的核心类：
+
+```rust
+use app::consumer::{ConsumerManager, ConsumerConfig};
+
+// 使用默认配置
+let mut manager = ConsumerManager::new();
+
+// 使用自定义配置
+let config = ConsumerConfig::all_enabled();
+let mut manager = ConsumerManager::with_config(&config);
+```
+
+#### 2. Consumer trait
+定义消费者接口：
+
+```rust
+#[async_trait::async_trait]
+pub trait Consumer: Send + Sync {
+    async fn start(&mut self, receiver: broadcast::Receiver<ScanMessage>) -> Result<tokio::task::JoinHandle<Result<()>>>;
+    fn name(&self) -> &'static str;
+}
+```
+
+#### 3. 内置消费者
+- **LogConsumer**: 日志记录消费者
+- **DatabaseConsumer**: 数据库消费者（预留接口）
+- **NotificationConsumer**: 通知消费者（预留接口）
+
+### 使用方法
+
+#### 在扫描中使用
+
+扫描函数已经集成了消费者管理器，会自动广播所有扫描结果：
+
+```rust
+use app::scan::{ScanParams, scan};
+
+let params = ScanParams {
+    path: "/path/to/scan".to_string(),
+    depth: 2,
+    ..Default::default()
+};
+
+// 扫描结果会自动广播给所有注册的消费者
+scan(params).await?;
+```
+
+#### 自定义消费者配置
+
+```rust
+use app::consumer::{ConsumerManager, ConsumerConfig};
+use app::scan::{ScanParams, scan};
+
+// 创建自定义配置
+let config = ConsumerConfig {
+    enable_log_consumer: true,
+    enable_database_consumer: true,
+    enable_notification_consumer: false,
+    channel_capacity: 5000,
+};
+
+// 使用配置创建管理器
+let mut manager = ConsumerManager::with_config(&config);
+```
+
+#### 消息流
+
+```
+扫描任务 → MPSC通道 → 主处理循环 → 广播 → 多个消费者
+```
+
+### 配置选项
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| enable_log_consumer | bool | true | 启用日志消费者 |
+| enable_database_consumer | bool | false | 启用数据库消费者 |
+| enable_notification_consumer | bool | false | 启用通知消费者 |
+| channel_capacity | usize | 10000 | 广播通道容量 |
+
+### 预设配置
+
+- `ConsumerConfig::default()`: 仅启用日志消费者
+- `ConsumerConfig::log_only()`: 仅启用日志消费者
+- `ConsumerConfig::all_enabled()`: 启用所有消费者
+
+---
+
+# 旧的消费者框架（v1.0 - 已弃用）
+
 这个consumer框架提供了一个灵活的方式来注册和管理多个消息消费者，包括一个专门的数据库消费者，用于对接AppDatabaseManager。
 
 ## 核心组件

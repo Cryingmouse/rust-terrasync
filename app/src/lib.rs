@@ -1,5 +1,6 @@
 extern crate log;
 
+pub mod consumer;
 pub mod scan;
 pub mod sync;
 

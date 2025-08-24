@@ -6,6 +6,7 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use utils::error::Result;
 
+use crate::consumer::ConsumerManager;
 use crate::scan::filter::{evaluate_filter, parse_filter_expression, FilterExpression};
 use crate::scan::stats::{ScanStats, StatsCalculator};
 
@@ -142,6 +143,7 @@ pub struct ScanResult {
 }
 
 /// 扫描消息枚举 - 用于队列通信的消息类型
+#[derive(Debug, Clone)]
 pub enum ScanMessage {
     Result(ScanResult),
     Stats(ScanStats),
@@ -160,13 +162,22 @@ pub async fn scan(params: ScanParams) -> Result<()> {
 
     log::info!("Scan configuration: {:?}", config);
 
+    // 创建消费者管理器（使用默认配置）
+    let mut consumer_manager = ConsumerManager::new();
+
+    // 启动所有消费者
+    let consumer_handles = consumer_manager.start_consumers().await?;
+
     // 创建队列通道
     let (tx, mut rx) = mpsc::channel::<ScanMessage>(10000);
+    
+    // 获取广播发送器
+    let broadcaster = consumer_manager.get_broadcaster();
 
     // 启动walkdir任务
     let walkdir_handle = tokio::spawn(async move { walkdir(config, tx).await });
 
-    // 处理队列消息
+    // 处理队列消息并广播给消费者
     let start_time = std::time::Instant::now();
     let mut stats = ScanStats::default();
 
@@ -182,21 +193,36 @@ pub async fn scan(params: ScanParams) -> Result<()> {
         tokio::select! {
             message = rx.recv() => {
                 match message {
-                    Some(ScanMessage::Result(_)) => {
+                    Some(ScanMessage::Result(result)) => {
+                        // 广播扫描结果给所有消费者
+                        if let Err(e) = broadcaster.send(ScanMessage::Result(result.clone())) {
+                            log::error!("Failed to broadcast scan result: {}", e);
+                        }
                     }
                     Some(ScanMessage::Stats(s)) => {
                         stats.merge_from(&s);
+                        
+                        // 广播统计信息给所有消费者
+                        if let Err(e) = broadcaster.send(ScanMessage::Stats(s.clone())) {
+                            log::error!("Failed to broadcast scan stats: {}", e);
+                        }
+                        
                         let now = chrono::Local::now();
                         println!("[{}] Scan progress: {} total files, {} total dirs, {} matched files, {} matched dirs",
                                  now.format("%Y-%m-%d %H:%M:%S"),
                                  stats.total_files, stats.total_dirs, stats.matched_files, stats.matched_dirs);
                     }
                     Some(ScanMessage::Complete) => {
+                        // 广播完成消息给所有消费者，忽略错误
+                        let _ = broadcaster.send(ScanMessage::Complete);
+                        
                         log::info!("Scan completed. Stats: {:?}", stats);
                         break;
                     }
                     None => {
                         log::warn!("Channel closed unexpectedly");
+                        // 广播完成消息给所有消费者
+                        let _ = broadcaster.send(ScanMessage::Complete);
                         break;
                     }
                 }
@@ -208,6 +234,14 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     let _ = walkdir_handle
         .await
         .map_err(|e| utils::error::Error::with_source("Walkdir task failed", Box::new(e)))?;
+
+    // 等待所有消费者完成
+    for handle in consumer_handles {
+        let _ = handle.await;
+    }
+
+    // 关闭消费者管理器
+    consumer_manager.shutdown().await?;
 
     // 计算总执行时间
     let duration = start_time.elapsed();
