@@ -331,4 +331,148 @@ mod tests {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }
+
+    #[tokio::test]
+    async fn test_batch_insert_temp_table() {
+        let mut db = setup_test_db();
+        db.initialize()
+            .await
+            .expect("Failed to initialize database");
+
+        // 清理并创建新的临时表
+        let _ = db.drop_scan_temporary_table().await;
+        let _ = db.drop_tables_with_prefix("temp_files_").await; // 额外清理可能存在的临时表
+        db.create_scan_temporary_table()
+            .await
+            .expect("Failed to create scan temporary table");
+
+        // 准备测试数据 - 使用合适的整数时间戳
+        let test_records = vec![
+            serde_json::json!({
+                "path": "/test/path/file1.txt",
+                "size": 1024,
+                "ext": "txt",
+                "ctime": 1234567890,
+                "mtime": 1234567890,
+                "atime": 1234567890,
+                "perm": 420, // 0o644 in decimal
+                "is_symlink": false,
+                "is_dir": false,
+                "is_regular_file": true,
+                "file_handle": "handle123",
+                "current_state": 1
+            }),
+            serde_json::json!({
+                "path": "/test/path/file2.jpg",
+                "size": 2048,
+                "ext": "jpg",
+                "ctime": 1234567891,
+                "mtime": 1234567891,
+                "atime": 1234567891,
+                "perm": 420,
+                "is_symlink": false,
+                "is_dir": false,
+                "is_regular_file": true,
+                "file_handle": "handle123",
+                "current_state": 1
+            }),
+            serde_json::json!({
+                "path": "/test/path/dir1",
+                "size": 0,
+                "ext": "",
+                "ctime": 1234567892,
+                "mtime": 1234567892,
+                "atime": 1234567892,
+                "perm": 493, // 0o755 in decimal
+                "is_symlink": false,
+                "is_dir": true,
+                "is_regular_file": false,
+                "file_handle": "handle123",
+                "current_state": 1
+            })
+        ];
+
+        // 测试批量插入
+        let result = db.batch_insert_temp_record_sync(test_records.clone()).await;
+        assert!(result.is_ok(), "Failed to batch insert temp records: {:?}", result);
+        
+        println!("Successfully inserted {} records to temporary table", test_records.len());
+
+        // 测试结束后清理表格
+        let _ = db.drop_scan_temporary_table().await;
+        let _ = db.drop_tables_with_prefix("temp_files_").await;
+    }
+
+    #[tokio::test]
+    async fn test_batch_insert_empty_temp_table() {
+        let mut db = setup_test_db();
+        db.initialize()
+            .await
+            .expect("Failed to initialize database");
+
+        // 清理并创建新的临时表
+        let _ = db.drop_scan_temporary_table().await;
+        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        db.create_scan_temporary_table()
+            .await
+            .expect("Failed to create scan temporary table");
+
+        // 测试空数据批量插入
+        let empty_records = vec![];
+        let result = db.batch_insert_temp_record_sync(empty_records).await;
+        assert!(result.is_ok(), "Empty batch insert should succeed: {:?}", result);
+        
+        println!("Empty batch insert test passed");
+
+        // 测试结束后清理表格
+        let _ = db.drop_scan_temporary_table().await;
+        let _ = db.drop_tables_with_prefix("temp_files_").await;
+    }
+
+    #[tokio::test]
+    async fn test_batch_insert_large_temp_table() {
+        let mut db = setup_test_db();
+        db.initialize()
+            .await
+            .expect("Failed to initialize database");
+
+        // 清理并创建新的临时表
+        let _ = db.drop_scan_temporary_table().await;
+        let _ = db.drop_tables_with_prefix("temp_files_").await;
+        db.create_scan_temporary_table()
+            .await
+            .expect("Failed to create scan temporary table");
+
+        // 准备大量测试数据 - 使用合适的整数时间戳
+        let mut large_records = Vec::new();
+        for i in 0..50 { // 50条记录
+            large_records.push(serde_json::json!({
+                "path": format!("/test/path/file_{}.txt", i),
+                "size": 1024 + (i * 100),
+                "ext": "txt",
+                "ctime": 1234567890 + i,
+                "mtime": 1234567890 + i,
+                "atime": 1234567890 + i,
+                "perm": 420,
+                "is_symlink": false,
+                "is_dir": false,
+                "is_regular_file": true,
+                "file_handle": "handle123",
+                "current_state": 1
+            }));
+        }
+
+        // 测试大批量插入
+        let start_time = std::time::Instant::now();
+        let result = db.batch_insert_temp_record_sync(large_records.clone()).await;
+        let duration = start_time.elapsed();
+        
+        assert!(result.is_ok(), "Large batch insert should succeed: {:?}", result);
+        
+        println!("Successfully inserted {} records in {:?}", large_records.len(), duration);
+
+        // 测试结束后清理表格
+        let _ = db.drop_scan_temporary_table().await;
+        let _ = db.drop_tables_with_prefix("temp_files_").await;
+    }
 }
