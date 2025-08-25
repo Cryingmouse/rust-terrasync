@@ -1,5 +1,5 @@
-use crate::scan::ScanMessage;
 use crate::consumer::Consumer;
+use crate::scan::ScanMessage;
 use tokio::sync::broadcast;
 use utils::error::Result;
 
@@ -16,9 +16,6 @@ impl Consumer for LogConsumer {
                 match receiver.recv().await {
                     Ok(ScanMessage::Result(result)) => {
                         log::info!("[LogConsumer] Scan result: {:?}", result);
-                    }
-                    Ok(ScanMessage::Stats(stats)) => {
-                        log::info!("[LogConsumer] Scan stats: {:?}", stats);
                     }
                     Ok(ScanMessage::Complete) => {
                         log::info!("[LogConsumer] Scan completed");

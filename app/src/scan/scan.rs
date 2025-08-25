@@ -1,14 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
 use std::time::SystemTime;
 use storage::Storage;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Duration};
 use utils::error::Result;
 
 use crate::consumer::ConsumerManager;
 use crate::scan::filter::{evaluate_filter, parse_filter_expression, FilterExpression};
-use crate::scan::stats::{ScanStats, StatsCalculator};
 
 /// 辅助函数：解析表达式列表
 fn parse_expressions(expressions: &[String]) -> Result<Vec<FilterExpression>> {
@@ -146,7 +143,6 @@ pub struct ScanResult {
 #[derive(Debug, Clone)]
 pub enum ScanMessage {
     Result(ScanResult),
-    Stats(ScanStats),
     Complete,
 }
 
@@ -170,62 +166,35 @@ pub async fn scan(params: ScanParams) -> Result<()> {
 
     // 创建队列通道
     let (tx, mut rx) = mpsc::channel::<ScanMessage>(10000);
-    
+
     // 获取广播发送器
     let broadcaster = consumer_manager.get_broadcaster();
 
-    // 启动walkdir任务
+    // 启动walkdir任务（现在仅生成ScanResults）
     let walkdir_handle = tokio::spawn(async move { walkdir(config, tx).await });
 
     // 处理队列消息并广播给消费者
-    let start_time = std::time::Instant::now();
-    let mut stats = ScanStats::default();
-
-    // 设置显示相关元数据
-    stats.command = ScanStats::build_command(&params);
-    stats.job_id = params.id.clone().unwrap_or_else(|| "default".to_string());
-    stats.log_path = ScanStats::build_log_path();
-
-    // 等待第一个10秒间隔再输出
     println!("terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.");
 
     loop {
-        tokio::select! {
-            message = rx.recv() => {
-                match message {
-                    Some(ScanMessage::Result(result)) => {
-                        // 广播扫描结果给所有消费者
-                        if let Err(e) = broadcaster.send(ScanMessage::Result(result.clone())) {
-                            log::error!("Failed to broadcast scan result: {}", e);
-                        }
-                    }
-                    Some(ScanMessage::Stats(s)) => {
-                        stats.merge_from(&s);
-                        
-                        // 广播统计信息给所有消费者
-                        if let Err(e) = broadcaster.send(ScanMessage::Stats(s.clone())) {
-                            log::error!("Failed to broadcast scan stats: {}", e);
-                        }
-                        
-                        let now = chrono::Local::now();
-                        println!("[{}] Scan progress: {} total files, {} total dirs, {} matched files, {} matched dirs",
-                                 now.format("%Y-%m-%d %H:%M:%S"),
-                                 stats.total_files, stats.total_dirs, stats.matched_files, stats.matched_dirs);
-                    }
-                    Some(ScanMessage::Complete) => {
-                        // 广播完成消息给所有消费者，忽略错误
-                        let _ = broadcaster.send(ScanMessage::Complete);
-                        
-                        log::info!("Scan completed. Stats: {:?}", stats);
-                        break;
-                    }
-                    None => {
-                        log::warn!("Channel closed unexpectedly");
-                        // 广播完成消息给所有消费者
-                        let _ = broadcaster.send(ScanMessage::Complete);
-                        break;
-                    }
+        match rx.recv().await {
+            Some(ScanMessage::Result(result)) => {
+                // 广播扫描结果给所有消费者
+                if let Err(e) = broadcaster.send(ScanMessage::Result(result.clone())) {
+                    log::error!("Failed to broadcast scan result: {}", e);
                 }
+            }
+            Some(ScanMessage::Complete) => {
+                // 广播完成消息给所有消费者，忽略错误
+                let _ = broadcaster.send(ScanMessage::Complete);
+
+                break;
+            }
+            None => {
+                log::warn!("Channel closed unexpectedly");
+                // 广播完成消息给所有消费者
+                let _ = broadcaster.send(ScanMessage::Complete);
+                break;
             }
         }
     }
@@ -243,21 +212,14 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     // 关闭消费者管理器
     consumer_manager.shutdown().await?;
 
-    // 计算总执行时间
-    let duration = start_time.elapsed();
-    stats.total_time = format!("{:.2}s", duration.as_secs_f64());
-
-    // 打印ScanStats到console
-    println!("\n{}", stats);
+    // Stats are now calculated and displayed by ConsoleConsumer
 
     Ok(())
 }
 
-/// 目录遍历函数 - 遍历目录并发送结果到队列
-pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Result<ScanStats> {
+/// 目录遍历函数 - 遍历目录并发送结果到队列（仅生成ScanResult，不计算统计信息）
+pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Result<()> {
     let scan_path = &config.params.path;
-    let calculator = StatsCalculator::new(&config.params.path);
-    let mut stats = ScanStats::default();
     let depth = if config.params.depth > 0 {
         Some(config.params.depth as usize)
     } else {
@@ -275,123 +237,78 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
     // 使用Storage trait的统一接口获取遍历器
     let mut rx = storage_type.walkdir(None, depth).await;
 
-    // 创建定时器，每10秒发送一次统计更新
-    let mut stats_timer = interval(Duration::from_secs(10));
-    let mut last_sent_stats = stats.clone();
-
     // 处理每个StorageEntry
-    loop {
-        tokio::select! {
-            entry = rx.recv() => {
-                match entry {
-                    Some(entry) => {
-                        let file_name = entry.name;
-                        let file_path = entry.path;
+    while let Some(entry) = rx.recv().await {
+        let file_name = entry.name;
+        let file_path = entry.path;
 
-                        // 标准化路径分隔符，使用正斜杠跨平台兼容
-                        let file_path = file_path.replace('\\', "/");
+        // 标准化路径分隔符，使用正斜杠跨平台兼容
+        let file_path = file_path.replace('\\', "/");
 
-                        // 直接从StorageEntry获取文件信息
-                        let is_dir = entry.is_dir;
-                        let is_symlink = entry.is_symlink.unwrap_or(false);
-                        let size = entry.size;
+        // 直接从StorageEntry获取文件信息
+        let is_dir = entry.is_dir;
+        let is_symlink = entry.is_symlink.unwrap_or(false);
+        let size = entry.size;
 
-                        // 更新基本统计
-                        if is_dir {
-                            stats.total_dirs += 1;
-                        } else {
-                            stats.total_files += 1;
-                        }
+        // 获取文件时间信息
+        let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
+        let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
+        let mtime = entry.modified;
 
-                        // 使用StatsCalculator更新扩展统计信息
-                        if is_dir {
-                            let depth = calculator.calculate_depth(Path::new(&file_path));
-                            calculator.update_dir_stats(&mut stats, &file_name, depth);
-                        } else {
-                            calculator.update_file_stats(&mut stats, &file_name, size, is_symlink);
-                        }
+        // 计算修改时间（天数）
+        let modified_days = {
+            let now = SystemTime::now();
+            now.duration_since(mtime)
+                .map(|duration| duration.as_secs_f64() / 86400.0)
+                .unwrap_or(0.0)
+        };
 
-                        // 获取文件时间信息
-                        let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
-                        let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
-                        let mtime = entry.modified;
+        // 获取文件扩展名
+        let extension = std::path::Path::new(&file_path)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
-                        // 计算修改时间（天数）
-                        let modified_days = {
-                            let now = SystemTime::now();
-                            now.duration_since(mtime)
-                                .map(|duration| duration.as_secs_f64() / 86400.0)
-                                .unwrap_or(0.0)
-                        };
+        let file_type = if is_dir { "dir" } else { "file" };
 
-                        // 获取文件扩展名
-                        let extension = std::path::Path::new(&file_path)
-                            .extension()
-                            .and_then(|ext| ext.to_str())
-                            .unwrap_or("")
-                            .to_lowercase();
+        // 应用过滤条件
+        let (matched, excluded) = evaluate_filter_conditions(
+            &config.expressions,
+            &config.exclude_expressions,
+            &file_name,
+            &file_path,
+            file_type,
+            modified_days,
+            size,
+            &extension,
+        );
 
-                        let file_type = if is_dir { "dir" } else { "file" };
+        // 创建扫描结果
+        let scan_result = ScanResult {
+            file_name,
+            file_path,
+            is_dir,
+            is_symlink,
+            size,
+            matched,
+            excluded,
+            atime,
+            ctime,
+            mtime,
+        };
 
-                        // 应用过滤条件
-                        let (matched, excluded) = evaluate_filter_conditions(
-                            &config.expressions,
-                            &config.exclude_expressions,
-                            &file_name,
-                            &file_path,
-                            file_type,
-                            modified_days,
-                            size,
-                            &extension,
-                        );
-
-                        // 创建扫描结果
-                        let scan_result = ScanResult {
-                            file_name,
-                            file_path,
-                            is_dir,
-                            is_symlink,
-                            size,
-                            matched,
-                            excluded,
-                            atime,
-                            ctime,
-                            mtime,
-                        };
-
-                        // 如果匹配且未被排除，更新匹配统计
-                        if matched && !excluded {
-                            if is_dir {
-                                stats.matched_dirs += 1;
-                            } else {
-                                stats.matched_files += 1;
-                            }
-                            log::debug!("Matched file: {:?}", scan_result);
-                        } else if !config.expressions.is_empty() {
-                            log::debug!("Filtered file: {:?}", scan_result);
-                        }
-
-                        // 发送ScanResult到队列
-                        send_message(&tx, ScanMessage::Result(scan_result)).await?;
-                    }
-                    None => {
-                        // 通道关闭，发送最终统计信息
-                        send_message(&tx, ScanMessage::Stats(stats.clone())).await?;
-                        send_message(&tx, ScanMessage::Complete).await?;
-                        return Ok(stats);
-                    }
-                }
-            }
-            _ = stats_timer.tick() => {
-                // 每10秒发送一次统计更新
-                if stats.total_files != last_sent_stats.total_files ||
-                   stats.total_dirs != last_sent_stats.total_dirs ||
-                   stats.matched_files != last_sent_stats.matched_files ||
-                   stats.matched_dirs != last_sent_stats.matched_dirs {
-                    send_message(&tx, ScanMessage::Stats(stats.clone())).await?;
-                    last_sent_stats = stats.clone();
-                }
-            }
+        if matched && !excluded {
+            log::debug!("Matched file: {:?}", scan_result);
+        } else if !config.expressions.is_empty() {
+            log::debug!("Filtered file: {:?}", scan_result);
         }
+
+        // 发送ScanResult到队列
+        send_message(&tx, ScanMessage::Result(scan_result)).await?;
     }
+
+    // 通道关闭，发送完成消息
+    send_message(&tx, ScanMessage::Complete).await?;
+    Ok(())
 }

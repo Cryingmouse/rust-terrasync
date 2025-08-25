@@ -1,5 +1,5 @@
-use crate::scan::ScanMessage;
 use crate::consumer::Consumer;
+use crate::scan::ScanMessage;
 use tokio::sync::broadcast;
 use utils::error::Result;
 
@@ -17,9 +17,6 @@ impl Consumer for DatabaseConsumer {
                     Ok(ScanMessage::Result(result)) => {
                         // TODO: 实现数据库保存逻辑
                         log::info!("[DatabaseConsumer] Saving result to database: {:?}", result);
-                    }
-                    Ok(ScanMessage::Stats(stats)) => {
-                        log::info!("[DatabaseConsumer] Processing stats: {:?}", stats);
                     }
                     Ok(ScanMessage::Complete) => {
                         log::info!("[DatabaseConsumer] Scan completed");

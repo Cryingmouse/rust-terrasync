@@ -9,6 +9,7 @@ mod db;
 mod kafka;
 mod log;
 mod manager;
+mod stats;
 
 // 公共模块
 pub mod config;
