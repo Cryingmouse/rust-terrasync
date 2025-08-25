@@ -4,6 +4,22 @@ use std::time::SystemTime;
 use storage::Storage;
 use tokio::sync::mpsc;
 use tokio_mpmc::Queue;
+
+/// 将Unix权限位格式化为 rwxrwxrwx 字符串
+fn format_permissions(mode: u32) -> String {
+    let mut perms = String::with_capacity(9);
+    let bit = |m, s| if m != 0 { s } else { "-" };
+    perms.push_str(bit(mode & 0o400, "r"));
+    perms.push_str(bit(mode & 0o200, "w"));
+    perms.push_str(bit(mode & 0o100, "x"));
+    perms.push_str(bit(mode & 0o040, "r"));
+    perms.push_str(bit(mode & 0o020, "w"));
+    perms.push_str(bit(mode & 0o010, "x"));
+    perms.push_str(bit(mode & 0o004, "r"));
+    perms.push_str(bit(mode & 0o002, "w"));
+    perms.push_str(bit(mode & 0o001, "x"));
+    perms
+}
 use utils::error::Result;
 
 use crate::consumer::ConsumerManager;
@@ -265,10 +281,10 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
         let handle = tokio::spawn(async move {
             while let Ok(Some(entry)) = consumer_queue.receive().await {
                 let file_name = entry.name;
-                let file_path = entry.path;
+                let mut file_path = entry.path;
 
                 // 标准化路径分隔符，使用正斜杠跨平台兼容
-                let file_path = file_path.replace('\\', "/");
+                file_path = file_path.replace('\\', "/");
 
                 // 直接从StorageEntry获取文件信息
                 let is_dir = entry.is_dir;
@@ -279,6 +295,9 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
                 let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
                 let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
                 let mtime = entry.modified;
+
+                // 格式化Unix权限（仅在需要时）
+                let _permissions_str = entry.mode.map(format_permissions);
 
                 // 计算修改时间（天数）
                 let modified_days = {

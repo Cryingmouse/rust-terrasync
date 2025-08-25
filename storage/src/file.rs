@@ -222,7 +222,17 @@ impl LocalStorage {
                         accessed: info.accessed().ok(),
                         created: info.created().ok(),
                         nfs_fh3: None,
-                        mode: None, // LocalStorage暂时不提供mode信息
+                        mode: {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                Some(info.permissions().mode())
+                            }
+                            #[cfg(windows)]
+                            {
+                                Some(if info.permissions().readonly() { 0o444 } else { 0o666 })
+                            }
+                        },
                         hard_links: Some(hard_links),
                     };
 

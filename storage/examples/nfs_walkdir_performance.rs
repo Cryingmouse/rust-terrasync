@@ -1,6 +1,22 @@
 use std::time::Duration;
 use storage::{parse_nfs_path, NFSStorage};
 
+/// 将Unix权限位格式化为 rwxrwxrwx 字符串
+fn format_permissions(mode: u32) -> String {
+    let mut perms = String::with_capacity(9);
+    let bit = |m, s| if m != 0 { s } else { "-" };
+    perms.push_str(bit(mode & 0o400, "r"));
+    perms.push_str(bit(mode & 0o200, "w"));
+    perms.push_str(bit(mode & 0o100, "x"));
+    perms.push_str(bit(mode & 0o040, "r"));
+    perms.push_str(bit(mode & 0o020, "w"));
+    perms.push_str(bit(mode & 0o010, "x"));
+    perms.push_str(bit(mode & 0o004, "r"));
+    perms.push_str(bit(mode & 0o002, "w"));
+    perms.push_str(bit(mode & 0o001, "x"));
+    perms
+}
+
 /// NFS存储walkdir性能测试示例 - 测量海量文件扫描速度（带超时和计数限制）
 ///
 /// 运行示例：
@@ -124,12 +140,17 @@ async fn test_nfs_walkdir_performance() {
                     entry.name.clone() 
                 };
 
+                // 格式化权限显示
+                let perms_str = entry.mode
+                    .map(|mode| format_permissions(mode))
+                    .unwrap_or_else(|| "-".to_string());
+
                 println!(
                     "│ {:<4} │ {:<24} │ {:<10} │ {:<6} │ {:<10} │ {:<7} │ {:<13} │",
                     file_type,
                     name_display,
                     size_str,
-                    entry.mode.unwrap_or_else(|| "-".to_string()),
+                    perms_str,
                     hard_links_str,
                     symlink_flag,
                     format_time(entry.modified)

@@ -257,6 +257,7 @@ impl NFSStorage {
     }
 
     /// 统一的StorageEntry构建函数，用于list_directory_internal和list_directory_recursive_internal
+    /// 保留必要的时间转换和路径处理，但移除Unix权限格式化
     fn build_storage_entry_detailed(
         entry: &nfs3::entryplus3,
         dir_path: &str,
@@ -283,7 +284,6 @@ impl NFSStorage {
             let modified_time = UNIX_EPOCH
                 .checked_add(modified_duration)
                 .unwrap_or(UNIX_EPOCH);
-            let modified: DateTime<Utc> = modified_time.into();
 
             // 访问时间 (atime)
             let atime = &attrs.atime;
@@ -291,7 +291,6 @@ impl NFSStorage {
             let accessed_time = UNIX_EPOCH
                 .checked_add(accessed_duration)
                 .unwrap_or(UNIX_EPOCH);
-            let accessed: DateTime<Utc> = accessed_time.into();
 
             // 创建/状态变更时间 (ctime)
             let ctime = &attrs.ctime;
@@ -299,18 +298,17 @@ impl NFSStorage {
             let created_time = UNIX_EPOCH
                 .checked_add(created_duration)
                 .unwrap_or(UNIX_EPOCH);
-            let created: DateTime<Utc> = created_time.into();
 
-            // 解析mode字段 - Unix文件权限
+            // 解析mode字段 - Unix文件权限原始值
             let mode = attrs.mode;
             // 硬链接数
             let hard_links = attrs.nlink as u64;
 
             (
-                is_dir, is_symlink, attrs.size, modified, accessed, created, mode, hard_links,
+                is_dir, is_symlink, attrs.size, modified_time, accessed_time, created_time, mode, hard_links,
             )
         } else {
-            (false, false, 0, Utc::now(), Utc::now(), Utc::now(), 0o644, 1)
+            (false, false, 0, UNIX_EPOCH, UNIX_EPOCH, UNIX_EPOCH, 0o644, 1)
         };
 
         let nfs_fh3 = match &entry.name_handle {
@@ -326,89 +324,19 @@ impl NFSStorage {
 
         let storage_entry = crate::StorageEntry {
             name,
-            path: full_path.clone(),
+            path: full_path,
             is_dir,
             size,
-            modified: modified_time.into(),
+            modified: modified_time,
             is_symlink: Some(is_symlink),
-            accessed: Some(accessed_time.into()),
-            created: Some(created_time.into()),
+            accessed: Some(accessed_time),
+            created: Some(created_time),
             nfs_fh3: Some(nfs_fh3),
-            mode: Some(format_mode(mode)),
+            // Unix权限原始值，格式化移至消费者循环
+            mode: Some(mode),
             hard_links: Some(hard_links),
         };
 
         Ok(storage_entry)
     }
-}
-
-/// 将Unix权限模式转换为rwxrwxrwx格式的字符串
-fn format_mode(mode: u32) -> String {
-    let mut result = String::new();
-
-    // 文件类型
-    let file_type = match mode & 0o170000 {
-        0o040000 => "d",
-        0o100000 => "-",
-        0o120000 => "l",
-        0o020000 => "c",
-        0o060000 => "b",
-        0o010000 => "p",
-        0o140000 => "s",
-        _ => "?",
-    };
-    result.push_str(file_type);
-
-    // 所有者权限
-    result.push(if mode & 0o400 != 0 { 'r' } else { '-' });
-    result.push(if mode & 0o200 != 0 { 'w' } else { '-' });
-    result.push(if mode & 0o100 != 0 {
-        if mode & 0o4000 != 0 {
-            's'
-        } else {
-            'x'
-        }
-    } else {
-        if mode & 0o4000 != 0 {
-            'S'
-        } else {
-            '-'
-        }
-    });
-
-    // 组权限
-    result.push(if mode & 0o040 != 0 { 'r' } else { '-' });
-    result.push(if mode & 0o020 != 0 { 'w' } else { '-' });
-    result.push(if mode & 0o010 != 0 {
-        if mode & 0o2000 != 0 {
-            's'
-        } else {
-            'x'
-        }
-    } else {
-        if mode & 0o2000 != 0 {
-            'S'
-        } else {
-            '-'
-        }
-    });
-
-    // 其他人权限
-    result.push(if mode & 0o004 != 0 { 'r' } else { '-' });
-    result.push(if mode & 0o002 != 0 { 'w' } else { '-' });
-    result.push(if mode & 0o001 != 0 {
-        if mode & 0o1000 != 0 {
-            't'
-        } else {
-            'x'
-        }
-    } else {
-        if mode & 0o1000 != 0 {
-            'T'
-        } else {
-            '-'
-        }
-    });
-
-    result
 }

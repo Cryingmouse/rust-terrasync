@@ -13,20 +13,17 @@ pub struct StorageEntry {
     pub is_dir: bool,
     /// 文件大小（字节）
     pub size: u64,
-    /// 最后修改时间（统一使用SystemTime）
     pub modified: SystemTime,
-    /// 是否为符号链接（仅本地文件系统）
-    pub is_symlink: Option<bool>,
-    /// 最后访问时间（仅本地文件系统）
     pub accessed: Option<SystemTime>,
-    /// 创建时间（仅本地文件系统）
     pub created: Option<SystemTime>,
     /// NFS文件句柄（仅NFS使用）
     pub nfs_fh3: Option<nfs3::nfs_fh3>,
-    /// 文件权限模式字符串（如rwxr-xr-x）
-    pub mode: Option<String>,
-    /// 硬链接数（仅本地文件系统和NFS）
+    /// 文件权限模式原始值（Unix权限位）
+    pub mode: Option<u32>,
+    /// 硬链接数（仅NFS使用）
     pub hard_links: Option<u64>,
+    /// 是否为符号链接（仅NFS使用）
+    pub is_symlink: Option<bool>,
 }
 
 impl StorageEntry {
