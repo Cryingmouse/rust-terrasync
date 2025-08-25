@@ -128,9 +128,13 @@ impl NFSStorage {
     ) -> tokio::sync::mpsc::Receiver<crate::StorageEntry> {
         let (tx, rx) = tokio::sync::mpsc::channel(1000);
         let dir_path = self.path.clone().unwrap_or_else(|| "/".to_string());
+        
         let server_ip = self.server_ip.clone();
         let portmapper_port = self.portmapper_port;
         let max_depth = depth.unwrap_or(0); // 0 means scan all depths
+        println!("dir_path: {}", dir_path);
+        println!("server_ip: {}", self.server_ip);
+        println!("portmapper_port: {}", self.portmapper_port);
 
         tokio::spawn(async move {
             let auth_unix = auth_unix {
@@ -208,7 +212,7 @@ impl NFSStorage {
                     let storage_entry = Self::build_storage_entry_detailed(entry, dir_path)?;
                     let is_dir = storage_entry.is_dir;
                     let full_path = storage_entry.path.clone();
-                    
+
                     if tx.send(storage_entry).await.is_err() {
                         return Ok(());
                     }
@@ -259,8 +263,7 @@ impl NFSStorage {
     /// 统一的StorageEntry构建函数，用于list_directory_internal和list_directory_recursive_internal
     /// 保留必要的时间转换和路径处理，但移除Unix权限格式化
     fn build_storage_entry_detailed(
-        entry: &nfs3::entryplus3,
-        dir_path: &str,
+        entry: &nfs3::entryplus3, dir_path: &str,
     ) -> NfsResult<crate::StorageEntry> {
         let name = String::from_utf8_lossy(&entry.name.0).to_string();
         let attrs = &entry.name_attributes;
@@ -305,10 +308,19 @@ impl NFSStorage {
             let hard_links = attrs.nlink as u64;
 
             (
-                is_dir, is_symlink, attrs.size, modified_time, accessed_time, created_time, mode, hard_links,
+                is_dir,
+                is_symlink,
+                attrs.size,
+                modified_time,
+                accessed_time,
+                created_time,
+                mode,
+                hard_links,
             )
         } else {
-            (false, false, 0, UNIX_EPOCH, UNIX_EPOCH, UNIX_EPOCH, 0o644, 1)
+            (
+                false, false, 0, UNIX_EPOCH, UNIX_EPOCH, UNIX_EPOCH, 0o644, 1,
+            )
         };
 
         let nfs_fh3 = match &entry.name_handle {

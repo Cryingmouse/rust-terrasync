@@ -21,8 +21,8 @@ pub enum StorageType {
 /// 根据路径前缀创建对应的存储实例
 pub fn create_storage(path: &str) -> Result<StorageType, String> {
     match path {
-        p if p.starts_with("nfs://") => create_nfs_storage(&p[6..]),
-        p if p.starts_with("s3://") => create_s3_storage(&p[5..]),
+        p if p.starts_with("nfs://") => create_nfs_storage(&p),
+        p if p.starts_with("s3://") => create_s3_storage(&p),
         _ => create_local_storage(path),
     }
 }
@@ -51,60 +51,154 @@ fn create_local_storage(path: &str) -> Result<StorageType, String> {
     Ok(StorageType::Local(local_storage))
 }
 
-/// 解析NFS路径，返回服务器IP和挂载路径
-// 增强的NFS路径解析函数
+/// 解析NFS路径，返回服务器IP、端口和挂载路径
+///
+/// 支持以下格式：
+/// - nfs://server/path
+/// - nfs://server:port/path
+/// - server:port:path (传统格式)
+/// - server:path (简写格式，使用默认端口)
+/// - server (仅服务器，使用默认端口和根路径)
+///
+/// # Arguments
+/// * `nfs_path` - NFS路径字符串
+///
+/// # Returns
+/// 返回一个三元组：(服务器IP, 端口, 路径)
+///
+/// # Panics
+/// 如果路径格式无效，将panic并显示支持的格式
 pub fn parse_nfs_path(nfs_path: &str) -> (String, u16, String) {
-    // 移除空白字符
     let nfs_path = nfs_path.trim();
 
-    // 检查是否为URL格式 (nfs://server/path)
-    if nfs_path.starts_with("nfs://") {
-        let without_prefix = &nfs_path[6..]; // 移除 "nfs://"
+    if nfs_path.is_empty() {
+        panic!("无效的NFS路径: 空字符串");
+    }
 
-        // 查找第一个斜杠位置来分离服务器和路径
-        if let Some(slash_pos) = without_prefix.find('/') {
-            let server_part = &without_prefix[..slash_pos];
-            let path_part = &without_prefix[slash_pos..]; // 包含开头的斜杠
+    // 处理nfs://格式的路径
+    if let Some(stripped) = nfs_path.strip_prefix("nfs://") {
+        return parse_nfs_url_format(stripped);
+    }
 
-            // 解析服务器部分，可能包含端口 (server:port)
-            let (server_ip, port) = if let Some(colon_pos) = server_part.find(':') {
-                let ip = &server_part[..colon_pos];
-                let port_str = &server_part[colon_pos + 1..];
-                let port = port_str.parse::<u16>().unwrap_or(PMAP_PORT);
-                (ip.to_string(), port)
+    // 处理传统格式 (server:port:path 或 server:path)
+    parse_nfs_traditional_format(nfs_path)
+}
+
+/// 解析nfs://server/path格式的路径
+fn parse_nfs_url_format(path_without_prefix: &str) -> (String, u16, String) {
+    // 查找第一个斜杠来分离服务器和路径
+    let slash_pos = path_without_prefix
+        .find('/')
+        .unwrap_or_else(|| panic!("无效的NFS URL格式: 缺少路径部分"));
+
+    let server_part = &path_without_prefix[..slash_pos];
+    let path_part = &path_without_prefix[slash_pos..];
+
+    // 确保路径以斜杠开头
+    if !path_part.starts_with('/') {
+        panic!("无效的NFS路径: 路径必须以斜杠开头");
+    }
+
+    // 解析服务器和端口
+    let (server, port) = parse_server_and_port(server_part);
+
+    (server, port, path_part.to_string())
+}
+
+/// 解析传统格式的NFS路径
+fn parse_nfs_traditional_format(nfs_path: &str) -> (String, u16, String) {
+    let parts: Vec<&str> = nfs_path.split(':').collect();
+
+    match parts.len() {
+        0 => panic!("无效的NFS路径: 空字符串"),
+        1 => {
+            // 只有服务器名，使用默认端口和根路径
+            let server = parts[0].trim();
+            if server.is_empty() {
+                panic!("无效的NFS路径: 服务器名不能为空");
+            }
+            (server.to_string(), PMAP_PORT, "/".to_string())
+        }
+        2 => {
+            // server:path 格式
+            let server = parts[0].trim();
+            let path = parts[1].trim();
+
+            if server.is_empty() {
+                panic!("无效的NFS路径: 服务器名不能为空");
+            }
+            if path.is_empty() {
+                panic!("无效的NFS路径: 路径不能为空");
+            }
+
+            // 确保路径以斜杠开头
+            let normalized_path = if path.starts_with('/') {
+                path.to_string()
             } else {
-                (server_part.to_string(), PMAP_PORT)
+                format!("/{}", path)
             };
 
-            return (server_ip, port, path_part.to_string());
+            (server.to_string(), PMAP_PORT, normalized_path)
+        }
+        _ => {
+            // server:port:path 格式
+            let server = parts[0].trim();
+            let port_str = parts[1].trim();
+            let path = parts[2..].join(":");
+            let path = path.trim();
+
+            if server.is_empty() {
+                panic!("无效的NFS路径: 服务器名不能为空");
+            }
+            if port_str.is_empty() {
+                panic!("无效的NFS路径: 端口号不能为空");
+            }
+            if path.is_empty() {
+                panic!("无效的NFS路径: 路径不能为空");
+            }
+
+            let port = port_str
+                .parse::<u16>()
+                .unwrap_or_else(|_| panic!("无效的端口号: {}", port_str));
+
+            // 确保路径以斜杠开头
+            let normalized_path = if path.starts_with('/') {
+                path.to_string()
+            } else {
+                format!("/{}", path)
+            };
+
+            (server.to_string(), port, normalized_path)
         }
     }
+}
 
-    // 检查是否为传统格式 (server:port:path)
-    let parts: Vec<&str> = nfs_path.split(':').collect();
-    if parts.len() >= 3 {
-        let server_ip = parts[0].to_string();
-        let port = parts[1].parse::<u16>().unwrap_or(PMAP_PORT);
-        let path = parts[2..].join(":"); // 处理路径中可能包含的冒号
-        return (server_ip, port, path);
+/// 解析服务器地址和端口
+fn parse_server_and_port(server_part: &str) -> (String, u16) {
+    let server_part = server_part.trim();
+    if server_part.is_empty() {
+        panic!("无效的NFS路径: 服务器名不能为空");
     }
 
-    // 检查是否为简写格式 (server:path) - 使用默认端口
-    if parts.len() == 2 {
-        let server_ip = parts[0].to_string();
-        let path = parts[1].to_string();
-        return (server_ip, PMAP_PORT, path);
-    }
+    if let Some(colon_pos) = server_part.find(':') {
+        let server = server_part[..colon_pos].trim();
+        let port_str = server_part[colon_pos + 1..].trim();
 
-    // 如果只有服务器，使用默认路径和端口
-    if !parts.is_empty() && !parts[0].is_empty() {
-        return (parts[0].to_string(), PMAP_PORT, "/".to_string());
-    }
+        if server.is_empty() {
+            panic!("无效的NFS路径: 服务器名不能为空");
+        }
+        if port_str.is_empty() {
+            panic!("无效的NFS路径: 端口号不能为空");
+        }
 
-    panic!(
-        "无效的NFS路径格式: {}。支持的格式:\n  - nfs://server/path\n  - nfs://server:port/path\n  - server:port:path\n  - server:path",
-        nfs_path
-    );
+        let port = port_str
+            .parse::<u16>()
+            .unwrap_or_else(|_| panic!("无效的端口号: {}", port_str));
+
+        (server.to_string(), port)
+    } else {
+        (server_part.to_string(), PMAP_PORT)
+    }
 }
 
 /// 解析S3配置，返回bucket和认证信息
