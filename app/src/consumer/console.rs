@@ -63,21 +63,15 @@ impl Consumer for ConsoleConsumer {
                             );
                         }
 
-                        // 如果匹配且未被排除，更新匹配统计
-                        if result.matched && !result.excluded {
-                            if result.is_dir {
-                                stats.matched_dirs += 1;
-                            } else {
-                                stats.matched_files += 1;
-                            }
-                        }
-
                         // 每10秒打印一次进度
                         if last_progress_time.elapsed().as_secs() >= 10 {
                             let now = chrono::Local::now();
-                            println!("[{}] Scan progress: {} total files, {} total dirs, {} matched files, {} matched dirs",
-                                     now.format("%Y-%m-%d %H:%M:%S"),
-                                     stats.total_files, stats.total_dirs, stats.matched_files, stats.matched_dirs);
+                            println!(
+                                "[{}] Scan progress: {} total files, {} total dirs",
+                                now.format("%Y-%m-%d %H:%M:%S"),
+                                stats.total_files,
+                                stats.total_dirs
+                            );
                             last_progress_time = Instant::now();
                         }
 

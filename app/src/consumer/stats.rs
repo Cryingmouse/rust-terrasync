@@ -9,8 +9,6 @@ pub struct ScanStats {
     // 基本统计
     pub total_files: usize,
     pub total_dirs: usize,
-    pub matched_files: usize,
-    pub matched_dirs: usize,
     pub total_size: i64, // 总大小（字节）
 
     // 扩展统计信息
@@ -69,8 +67,6 @@ impl ScanStats {
     pub fn merge_from(&mut self, other: &ScanStats) {
         self.total_files = other.total_files;
         self.total_dirs = other.total_dirs;
-        self.matched_files = other.matched_files;
-        self.matched_dirs = other.matched_dirs;
         self.total_size = other.total_size;
         self.total_symlink = other.total_symlink;
         self.total_regular_file = other.total_regular_file;
@@ -87,8 +83,6 @@ impl Default for ScanStats {
             // 基本统计
             total_files: 0,
             total_dirs: 0,
-            matched_files: 0,
-            matched_dirs: 0,
 
             // 扩展统计信息
             total_size: 0,
