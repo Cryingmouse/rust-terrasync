@@ -7,9 +7,6 @@ use std::time::SystemTime;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
-#[cfg(windows)]
-
-use tokio::fs as tokio_fs;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 const DIR_SUFFIX: &str = "/";
@@ -29,14 +26,14 @@ pub struct FileObject {
 
 /// Async section reader for efficient file reading
 pub struct AsyncSectionReader {
-    file: tokio_fs::File,
+    file: tokio::fs::File,
     limit: u64,
     current_pos: u64,
 }
 
 impl AsyncSectionReader {
     pub async fn new(path: PathBuf, offset: u64, limit: u64) -> io::Result<Self> {
-        let mut file = tokio_fs::File::open(path).await?;
+        let mut file = tokio::fs::File::open(path).await?;
         file.seek(SeekFrom::Start(offset)).await?;
 
         Ok(Self {
@@ -127,10 +124,10 @@ impl FileObject {
 
     /// Delete the file/directory asynchronously
     pub async fn delete(&self) -> io::Result<()> {
-        match tokio_fs::remove_file(&self.path).await {
+        match tokio::fs::remove_file(&self.path).await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => tokio_fs::remove_dir_all(&self.path).await.or_else(|e| {
+            Err(_) => tokio::fs::remove_dir_all(&self.path).await.or_else(|e| {
                 if e.kind() == io::ErrorKind::NotFound {
                     Ok(())
                 } else {
@@ -146,7 +143,7 @@ impl FileObject {
             return Ok(Vec::new());
         }
 
-        let mut file = tokio_fs::File::open(&self.path).await?;
+        let mut file = tokio::fs::File::open(&self.path).await?;
         file.seek(SeekFrom::Start(offset)).await?;
         let actual_limit = std::cmp::min(limit, self.size() - offset);
 
@@ -208,10 +205,10 @@ impl LocalStorage {
 
                     #[cfg(unix)]
                     let hard_links = info.nlink() as u64;
-                    
+
                     #[cfg(not(unix))]
                     let hard_links = 1;
-                    
+
                     let storage_entry = crate::StorageEntry {
                         name,
                         path: path.to_string_lossy().to_string(),
@@ -230,7 +227,11 @@ impl LocalStorage {
                             }
                             #[cfg(windows)]
                             {
-                                Some(if info.permissions().readonly() { 0o444 } else { 0o666 })
+                                Some(if info.permissions().readonly() {
+                                    0o444
+                                } else {
+                                    0o666
+                                })
                             }
                         },
                         hard_links: Some(hard_links),
@@ -253,7 +254,7 @@ impl LocalStorage {
     /// Get file metadata asynchronously
     pub async fn head(&self, key: &str) -> io::Result<FileObject> {
         let path = self.full_path(key);
-        let metadata = tokio_fs::metadata(&path).await?;
+        let metadata = tokio::fs::metadata(&path).await?;
 
         let name = Path::new(key)
             .file_name()
@@ -275,7 +276,7 @@ impl LocalStorage {
             return Ok(Vec::new());
         }
 
-        let mut file = tokio_fs::File::open(&obj.path).await?;
+        let mut file = tokio::fs::File::open(&obj.path).await?;
 
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer).await?;
@@ -294,18 +295,18 @@ impl LocalStorage {
         };
 
         if key.ends_with(DIR_SUFFIX) || key.is_empty() {
-            tokio_fs::create_dir_all(&p).await?;
+            tokio::fs::create_dir_all(&p).await?;
             return Ok(());
         }
 
         // Create parent directories if needed
         if let Some(parent) = p.parent() {
-            if !tokio_fs::try_exists(parent).await? {
-                tokio_fs::create_dir_all(parent).await?;
+            if !tokio::fs::try_exists(parent).await? {
+                tokio::fs::create_dir_all(parent).await?;
             }
         }
 
-        let mut file = tokio_fs::OpenOptions::new()
+        let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
@@ -320,10 +321,10 @@ impl LocalStorage {
     /// Delete file/directory asynchronously
     pub async fn delete(&self, key: &str) -> io::Result<()> {
         let path = self.full_path(key);
-        match tokio_fs::remove_file(&path).await {
+        match tokio::fs::remove_file(&path).await {
             Ok(_) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(_) => tokio_fs::remove_dir_all(&path).await.or_else(|e| {
+            Err(_) => tokio::fs::remove_dir_all(&path).await.or_else(|e| {
                 if e.kind() == io::ErrorKind::NotFound {
                     Ok(())
                 } else {
@@ -340,19 +341,19 @@ impl LocalStorage {
 
         // Create parent directories if needed
         if let Some(parent) = dest_path.parent() {
-            if !tokio_fs::try_exists(parent).await? {
-                tokio_fs::create_dir_all(parent).await?;
+            if !tokio::fs::try_exists(parent).await? {
+                tokio::fs::create_dir_all(parent).await?;
             }
         }
 
-        tokio_fs::copy(src_path, dest_path).await?;
+        tokio::fs::copy(src_path, dest_path).await?;
         Ok(())
     }
 
     /// Get root object asynchronously
     pub async fn root(&self) -> io::Result<FileObject> {
         let path = PathBuf::from(&self.root);
-        let metadata = tokio_fs::metadata(&path).await?;
+        let metadata = tokio::fs::metadata(&path).await?;
 
         let name = path
             .file_name()
@@ -370,7 +371,7 @@ impl LocalStorage {
     /// Check if path exists asynchronously
     pub async fn exists(&self, key: &str) -> io::Result<bool> {
         let path = self.full_path(key);
-        tokio_fs::try_exists(&path).await
+        tokio::fs::try_exists(&path).await
     }
 
     // 删除FileObjectRef结构体及其相关实现
