@@ -128,13 +128,10 @@ impl NFSStorage {
     ) -> tokio::sync::mpsc::Receiver<crate::StorageEntry> {
         let (tx, rx) = tokio::sync::mpsc::channel(1000);
         let dir_path = self.path.clone().unwrap_or_else(|| "/".to_string());
-        
+
         let server_ip = self.server_ip.clone();
         let portmapper_port = self.portmapper_port;
         let max_depth = depth.unwrap_or(0); // 0 means scan all depths
-        println!("dir_path: {}", dir_path);
-        println!("server_ip: {}", self.server_ip);
-        println!("portmapper_port: {}", self.portmapper_port);
 
         tokio::spawn(async move {
             let auth_unix = auth_unix {
