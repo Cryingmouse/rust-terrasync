@@ -17,9 +17,12 @@ batch_size = 200000      # Batch size for file entries. Recommended: 10000 for s
 
 [database.clickhouse]
 # ClickHouse specific configuration
-dsn = "http://10.131.9.20:8123"  # DSN format: tcp://host:port?database=dbname&user=username&password=password
+dsn = "http://10.131.9.20:8123"  # DSN format: http://host:port
 dial_timeout = 5
 read_timeout = 30
+database = "default"
+username = "default"
+password = ""
 
 [kafka]
 enabled = false          # Enable Kafka integration

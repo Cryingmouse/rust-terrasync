@@ -1,6 +1,5 @@
 use crate::consumer::Consumer;
 use crate::scan::ScanMessage;
-use chrono::Local;
 use db::config::DatabaseConfig;
 use db::factory::create_database;
 use db::traits::Database;
@@ -8,22 +7,10 @@ use db::traits::FileScanRecord;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::broadcast;
-use utils::app_config::AppConfig;
 use utils::error::Result;
 
 /// 数据库消费者 - 将扫描结果存储到数据库
 pub struct DatabaseConsumer;
-
-/// 将作业ID转换为文件系统安全的标识符
-/// 将特殊字符转换为下划线，确保可用于目录和文件名
-fn sanitize_job_id(job_id: &str) -> String {
-    job_id
-        .replace('-', "_")
-        .replace('.', "_")
-        .replace(' ', "_")
-        .replace('/', "_")
-        .replace('\\', "_")
-}
 
 #[async_trait::async_trait]
 impl Consumer for DatabaseConsumer {
@@ -115,20 +102,8 @@ impl Consumer for DatabaseConsumer {
                         break;
                     }
                     Ok(ScanMessage::Config(config)) => {
-                        // 从应用配置中获取数据库配置
-                        let app_config = AppConfig::fetch().map_err(|e| {
-                            utils::error::Error::with_source(
-                                "Failed to load application configuration",
-                                Box::new(e),
-                            )
-                        })?;
-
                         // 生成或处理扫描ID，使用与CLI相同的逻辑
-                        let current_job_id = config.params.id.clone().unwrap_or_else(|| {
-                            let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
-                            timestamp
-                        });
-                        let current_job_id = sanitize_job_id(&current_job_id);
+                        let current_job_id = config.job_id.clone();
 
                         log::info!(
                             "[DatabaseConsumer] Initializing database for job: {}",
@@ -137,16 +112,16 @@ impl Consumer for DatabaseConsumer {
 
                         // 构建数据库配置
                         let db_config = DatabaseConfig {
-                            enabled: app_config.database.enabled,
-                            db_type: app_config.database.r#type.clone(),
-                            batch_size: app_config.database.batch_size,
+                            enabled: config.app_config.database.enabled,
+                            db_type: config.app_config.database.r#type.clone(),
+                            batch_size: config.app_config.database.batch_size,
                             clickhouse: Some(db::config::ClickHouseConfig {
-                                dsn: app_config.database.clickhouse.dsn.clone(),
-                                dial_timeout: app_config.database.clickhouse.dial_timeout,
-                                read_timeout: app_config.database.clickhouse.read_timeout,
-                                database: Some("default".to_string()),
-                                username: Some("default".to_string()),
-                                password: None,
+                                dsn: config.app_config.database.clickhouse.dsn.clone(),
+                                dial_timeout: config.app_config.database.clickhouse.dial_timeout,
+                                read_timeout: config.app_config.database.clickhouse.read_timeout,
+                                database: config.app_config.database.clickhouse.database.clone(),
+                                username: config.app_config.database.clickhouse.username.clone(),
+                                password: config.app_config.database.clickhouse.password.clone(),
                             }),
                         };
 

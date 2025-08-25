@@ -1,5 +1,5 @@
 use db::config::{ClickHouseConfig, DatabaseConfig};
-use db::{create_database, DatabaseFactory};
+use db::{DatabaseFactory, create_database};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -20,8 +20,8 @@ fn setup_clickhouse_config() -> DatabaseConfig {
             dsn: "http://10.131.9.20:8123".to_string(),
             dial_timeout: 10,
             read_timeout: 30,
-            database: Some("default".to_string()),
-            username: Some("default".to_string()),
+            database: "default".to_string(),
+            username: "default".to_string(),
             password: None,
         }),
     }
@@ -222,26 +222,6 @@ mod tests {
             base_query_result.unwrap().is_empty(),
             "Empty base table should return empty vec"
         );
-
-        // 测试单个插入到基础表
-        let single_record = FileScanRecord {
-            path: "/test/path/single.txt".to_string(),
-            size: 512,
-            ext: Some("txt".to_string()),
-            ctime: 1609459200,
-            mtime: 1609459200,
-            atime: 1609459200,
-            perm: 0o644,
-            is_symlink: false,
-            is_dir: false,
-            is_regular_file: true,
-            file_handle: Some("single_handle".to_string()),
-            current_state: 2,
-        };
-
-        db.insert_file_record_async(single_record.clone())
-            .await
-            .expect("Failed to insert single record");
 
         // 测试通用execute接口
         let execute_result = db

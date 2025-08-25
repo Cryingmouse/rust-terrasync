@@ -7,13 +7,11 @@ use crate::config::ClickHouseConfig;
 use crate::error::{DatabaseError, Result};
 use crate::traits::FileScanRecord;
 use crate::traits::{Database, QueryResult};
-use crate::{generate_scan_temp_table_name, get_scan_base_table_name, get_scan_state_table_name};
 use crate::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME};
+use crate::{generate_scan_temp_table_name, get_scan_base_table_name, get_scan_state_table_name};
 
 pub struct ClickHouseDatabase {
-    config: ClickHouseConfig,
     sync_client: Client,
-    async_client: Client,
     job_id: String,
     scan_temp_table_name: Option<String>,
 }
@@ -39,29 +37,16 @@ impl ClickHouseDatabase {
         // 创建同步客户端
         let mut sync_client = Client::default()
             .with_url(&config.dsn)
-            .with_database(config.database.as_deref().unwrap_or("default"));
+            .with_database(config.database)
+            .with_user(config.username);
 
-        // 创建异步客户端（配置异步插入参数）
-        let mut async_client = Client::default()
-            .with_url(&config.dsn)
-            .with_database(config.database.as_deref().unwrap_or("default"))
-            .with_option("async_insert", "1")
-            .with_option("wait_for_async_insert", "0");
-
-        // 可选的用户名和密码配置（两个客户端都配置）
-        if let Some(username) = &config.username {
-            sync_client = sync_client.with_user(username);
-            async_client = async_client.with_user(username);
-        }
+        // 可选的密码配置
         if let Some(password) = &config.password {
             sync_client = sync_client.with_password(password);
-            async_client = async_client.with_password(password);
         }
 
         Self {
-            config,
             sync_client,
-            async_client,
             job_id,
             scan_temp_table_name: None,
         }
@@ -143,8 +128,6 @@ impl ClickHouseDatabase {
 #[async_trait]
 impl Database for ClickHouseDatabase {
     async fn ping(&self) -> Result<()> {
-        debug!("Initializing ClickHouse connection to: {}", self.config.dsn);
-
         // 测试连接
         self.sync_client
             .query("SELECT 1")

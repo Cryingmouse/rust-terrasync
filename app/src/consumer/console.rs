@@ -77,10 +77,12 @@ impl Consumer for ConsoleConsumer {
 
                         log::debug!("[ConsoleConsumer] Processed: {:?}", result);
                     }
-                    Ok(ScanMessage::Config(config)) => {
+                    Ok(ScanMessage::Config(consumer_config)) => {
                         // 使用配置信息填充统计信息
-                        stats.command = ScanStats::build_command(&config.params);
-                        stats.job_id = config
+                        stats.command =
+                            ScanStats::build_command(&consumer_config.scan_config.params);
+                        stats.job_id = consumer_config
+                            .scan_config
                             .params
                             .id
                             .clone()

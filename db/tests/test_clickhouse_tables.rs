@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod tests {
+    use db::Database;
     use db::clickhouse::ClickHouseDatabase;
     use db::config::ClickHouseConfig;
     use db::traits::FileScanRecord;
-    use db::Database;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,8 +27,8 @@ mod tests {
             dsn: "http://10.131.9.20:8123".to_string(),
             dial_timeout: 10,
             read_timeout: 30,
-            database: Some("default".to_string()),
-            username: Some("default".to_string()),
+            database: "default".to_string(),
+            username: "default".to_string(),
             password: None,
         };
 
@@ -315,66 +315,6 @@ mod tests {
         // 测试查询指定列
         let result = db.query_scan_base_table(&["path", "size"]).await;
         assert!(result.is_ok(), "Query with specific columns should succeed");
-
-        // 测试结束后清理
-        let _ = cleanup_test_tables(&db, &job_id).await;
-    }
-
-    #[tokio::test]
-    async fn test_insert_file_record_async() {
-        let job_id = generate_unique_job_id("test_insert_async");
-        let db = setup_test_db_with_job_id(&job_id);
-
-        if db.ping().await.is_err() {
-            println!("ClickHouse server not available, skipping test");
-            return;
-        }
-
-        // 创建主扫描表
-        db.create_scan_base_table()
-            .await
-            .expect("Failed to create scan base table");
-
-        // 准备测试数据
-        let test_record = FileScanRecord {
-            path: "/test/path/test_file.txt".to_string(),
-            size: 1024,
-            ext: Some("txt".to_string()),
-            ctime: 1234567890,
-            mtime: 1234567890,
-            atime: 1234567890,
-            perm: 0o644,
-            is_symlink: false,
-            is_dir: false,
-            is_regular_file: true,
-            file_handle: Some("test_handle".to_string()),
-            current_state: 1,
-        };
-
-        // 使用trait接口异步插入
-        let result = db.insert_file_record_async(test_record.clone()).await;
-
-        assert!(result.is_ok(), "Failed to insert record: {:?}", result);
-
-        // 验证数据插入成功
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-        // 使用trait接口查询验证数据
-        let records = db.query_scan_base_table(&[]).await;
-        assert!(records.is_ok(), "Failed to query records: {:?}", records);
-
-        let records = records.unwrap();
-        let found_record = records
-            .iter()
-            .find(|r| r.path == "/test/path/test_file.txt");
-
-        assert!(
-            found_record.is_some(),
-            "Inserted record not found in database"
-        );
-        assert_eq!(found_record.unwrap().size, 1024);
-
-        println!("Successfully inserted and verified file record");
 
         // 测试结束后清理
         let _ = cleanup_test_tables(&db, &job_id).await;

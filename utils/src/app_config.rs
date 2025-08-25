@@ -14,32 +14,35 @@ lazy_static! {
     pub static ref BUILDER: RwLock<ConfigBuilder<DefaultState>> = RwLock::new(Config::builder());
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct LogConfig {
     pub max_size: u64,
     pub max_backups: u32,
     pub level: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ScanConfig {
     pub concurrency: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct MigrateConfig {
     pub overwrite: bool,
     pub concurrency: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DatabaseClickhouse {
     pub dsn: String,
     pub dial_timeout: u32,
     pub read_timeout: u32,
+    pub database: String,
+    pub username: String,
+    pub password: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct DatabaseConfig {
     pub enabled: bool,
     pub r#type: String,
@@ -47,7 +50,7 @@ pub struct DatabaseConfig {
     pub clickhouse: DatabaseClickhouse,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct KafkaConfig {
     pub enabled: bool,
     pub host: String,
@@ -56,7 +59,7 @@ pub struct KafkaConfig {
     pub concurrency: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppConfig {
     pub log: LogConfig,
     pub scan: ScanConfig,

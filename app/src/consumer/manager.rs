@@ -15,8 +15,11 @@ pub struct ConsumerManager {
 
 impl ConsumerManager {
     /// 创建新的消费者管理器
-    pub fn new( enable_database_consumer: bool, enable_kafka_consumer: bool) -> Self {
-        Self::with_config(&ConsumerConfig::enable_consumer(enable_database_consumer, enable_kafka_consumer))
+    pub fn new(enable_database_consumer: bool, enable_kafka_consumer: bool) -> Self {
+        Self::with_config(&ConsumerConfig::enable_consumer(
+            enable_database_consumer,
+            enable_kafka_consumer,
+        ))
     }
 
     /// 根据配置创建消费者管理器
@@ -27,10 +30,6 @@ impl ConsumerManager {
             consumers: Vec::new(),
         };
 
-        // 根据配置添加消费者
-        if config.enable_log_consumer {
-            manager.add_consumer(Box::new(LogConsumer));
-        }
         if config.enable_database_consumer {
             manager.add_consumer(Box::new(DatabaseConsumer));
         }
@@ -39,6 +38,8 @@ impl ConsumerManager {
         }
         // 始终添加控制台消费者
         manager.add_consumer(Box::new(ConsoleConsumer));
+        // 始终添加日志消费者
+        manager.add_consumer(Box::new(LogConsumer));
 
         manager
     }

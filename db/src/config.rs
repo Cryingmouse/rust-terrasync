@@ -19,8 +19,8 @@ pub struct ClickHouseConfig {
     pub dsn: String,
     pub dial_timeout: u32,
     pub read_timeout: u32,
-    pub database: Option<String>,
-    pub username: Option<String>,
+    pub database: String,
+    pub username: String,
     pub password: Option<String>,
 }
 
@@ -41,8 +41,8 @@ impl Default for ClickHouseConfig {
             dsn: "tcp://localhost:9000".to_string(),
             dial_timeout: 10,
             read_timeout: 30,
-            database: Some("default".to_string()),
-            username: Some("default".to_string()),
+            database: "default".to_string(),
+            username: "default".to_string(),
             password: None,
         }
     }

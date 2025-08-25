@@ -1,7 +1,10 @@
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use std::time::SystemTime;
 use storage::Storage;
 use tokio::sync::mpsc;
+use tokio::time;
+use utils::app_config::AppConfig;
 
 /// 将Unix权限位格式化为 rwxrwxrwx 字符串
 fn format_permissions(mode: u32) -> String {
@@ -164,6 +167,13 @@ pub struct ScanConfig {
     pub exclude_expressions: Vec<FilterExpression>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConsumerConfig {
+    pub app_config: AppConfig,
+    pub scan_config: ScanConfig,
+    pub job_id: String,
+}
+
 /// 扫描结果结构体 - 单个文件/目录的信息
 #[derive(Debug, Clone, Serialize)]
 pub struct StorageEntity {
@@ -187,23 +197,32 @@ pub enum ScanMessage {
     Result(StorageEntity),
     Complete,
     /// 扫描配置信息
-    Config(ScanConfig),
+    Config(ConsumerConfig),
 }
 
 /// 主扫描函数 - 入口点
 pub async fn scan(params: ScanParams) -> Result<()> {
     log::info!("Starting scan with params: {:?}", params);
 
-    let config = ScanConfig {
+    let scan_config = ScanConfig {
         params: params.clone(),
         expressions: parse_expressions(&params.match_expressions)?,
         exclude_expressions: parse_expressions(&params.exclude_expressions)?,
     };
 
-    log::info!("Scan configuration: {:?}", config);
+    let app_config = AppConfig::fetch().map_err(|e| {
+        utils::error::Error::with_source("Failed to load application configuration", Box::new(e))
+    })?;
+
+    let consumer_config = ConsumerConfig {
+        app_config: app_config.clone(),
+        scan_config: scan_config.clone(),
+        job_id: params.id.clone().unwrap_or_else(|| "unknown".to_string()),
+    };
 
     // 创建消费者管理器（使用默认配置）
-    let mut consumer_manager = ConsumerManager::new(true, false);
+    let mut consumer_manager =
+        ConsumerManager::new(app_config.database.enabled, app_config.kafka.enabled);
 
     // 启动所有消费者
     let consumer_handles = consumer_manager.start_consumers().await?;
@@ -215,35 +234,34 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     let broadcaster = consumer_manager.get_broadcaster();
 
     // 发送配置信息给所有消费者
-    if let Err(e) = broadcaster.send(ScanMessage::Config(config.clone())) {
+    if let Err(e) = broadcaster.send(ScanMessage::Config(consumer_config)) {
         log::error!("Failed to broadcast scan config: {}", e);
     }
 
+    // 等待所有消费者启动，例如数据库消费者会创建应的数据库表
+    time::sleep(Duration::from_secs(2)).await;
+
     // 启动walkdir任务（仅生成ScanResults）
-    let walkdir_handle = tokio::spawn(async move { walkdir(config, tx).await });
+    let walkdir_handle = tokio::spawn(async move { walkdir(scan_config, tx).await });
 
     loop {
         match rx.recv().await {
             Some(ScanMessage::Result(result)) => {
                 // 广播扫描结果给所有消费者
-                // print!("send result message to all consumers!!");
                 if let Err(e) = broadcaster.send(ScanMessage::Result(result.clone())) {
                     log::error!("Failed to broadcast scan result: {}", e);
                 }
             }
             Some(ScanMessage::Complete) => {
-                print!("send complete message to all consumers!!");
                 // 广播完成消息给所有消费者，忽略错误
                 let _ = broadcaster.send(ScanMessage::Complete);
 
                 break;
             }
             Some(ScanMessage::Config(_)) => {
-                print!("send config message to all consumers!!");
                 // 忽略配置消息，已在前面的步骤处理
             }
             None => {
-                print!("Channel closed unexpectedly");
                 log::warn!("Channel closed unexpectedly");
                 // 广播完成消息给所有消费者
                 let _ = broadcaster.send(ScanMessage::Complete);
