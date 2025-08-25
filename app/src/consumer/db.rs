@@ -20,11 +20,13 @@ impl Consumer for DatabaseConsumer {
         let handle = tokio::spawn(async move {
             let mut database: Option<Arc<dyn Database>> = None;
             let mut batch_size: Option<u32> = None;
-            let mut batch_records = Vec::with_capacity(batch_size.unwrap_or(200_000) as usize);
+            let mut current_batch = Vec::with_capacity(batch_size.unwrap_or(400_000) as usize);
+            let mut next_batch = Vec::with_capacity(batch_size.unwrap_or(400_000) as usize);
 
             loop {
                 match receiver.recv().await {
                     Ok(ScanMessage::Result(entity)) => {
+                        let actual_batch_size = batch_size.unwrap_or(400_000) as usize;
                         if let Some(db) = &database {
                             // Convert SystemTime to u64 timestamp
                             let ctime = entity
@@ -64,18 +66,34 @@ impl Consumer for DatabaseConsumer {
                                 file_handle: None,
                                 current_state: 0,
                             };
-                            batch_records.push(record);
+                            current_batch.push(record);
 
-                            // 达到批量大小则插入数据库
-                            if batch_records.len() >= batch_size.unwrap_or(200_000) as usize {
-                                log::info!(
-                                    "[DatabaseConsumer] Inserting batch of {} records",
-                                    batch_records.len()
-                                );
-                                let _ = db
-                                    .batch_insert_base_record_sync(batch_records.clone())
-                                    .await;
-                                batch_records.clear();
+                            // 达到批量大小则异步插入数据库并切换缓冲
+                            if current_batch.len() >= actual_batch_size {
+                                // 交换当前缓冲和备用缓冲
+                                std::mem::swap(&mut current_batch, &mut next_batch);
+                                let db_clone = Arc::clone(db);
+                                let batch_to_insert = std::mem::take(&mut next_batch);
+
+                                // 异步执行数据库插入操作
+                                tokio::spawn(async move {
+                                    log::info!(
+                                        "[DatabaseConsumer] Inserting batch of {} records",
+                                        batch_to_insert.len()
+                                    );
+                                    if let Err(e) = db_clone
+                                        .batch_insert_base_record_sync(batch_to_insert)
+                                        .await
+                                    {
+                                        log::error!(
+                                            "[DatabaseConsumer] Failed to insert batch: {}",
+                                            e
+                                        );
+                                    }
+                                });
+
+                                // 为下一批数据预留容量
+                                current_batch.reserve(actual_batch_size);
                             }
                         }
                     }
@@ -86,15 +104,15 @@ impl Consumer for DatabaseConsumer {
 
                         // 如果有剩余记录，插入数据库
                         if let Some(db) = &database {
-                            if !batch_records.is_empty() {
+                            if !current_batch.is_empty() {
                                 log::info!(
                                     "[DatabaseConsumer] Inserting final batch of {} records",
-                                    batch_records.len()
+                                    current_batch.len()
                                 );
                                 let _ = db
-                                    .batch_insert_base_record_sync(batch_records.clone())
+                                    .batch_insert_base_record_sync(current_batch.clone())
                                     .await;
-                                batch_records.clear();
+                                current_batch.clear();
                             }
                         }
 
