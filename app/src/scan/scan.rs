@@ -126,7 +126,7 @@ pub struct ScanConfig {
 
 /// 扫描结果结构体 - 单个文件/目录的信息
 #[derive(Debug, Clone, Serialize)]
-pub struct ScanResult {
+pub struct StorageEntity {
     pub file_name: String,
     pub file_path: String,
     pub is_dir: bool,
@@ -142,7 +142,7 @@ pub struct ScanResult {
 /// 扫描消息枚举 - 用于队列通信的消息类型
 #[derive(Debug, Clone)]
 pub enum ScanMessage {
-    Result(ScanResult),
+    Result(StorageEntity),
     Complete,
 }
 
@@ -287,7 +287,7 @@ pub async fn sanitize_storage_entity(
         );
 
         // 创建扫描结果
-        let scan_result = ScanResult {
+        let scan_result = StorageEntity {
             file_name,
             file_path,
             is_dir,
