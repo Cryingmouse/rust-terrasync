@@ -14,19 +14,17 @@ impl Consumer for LogConsumer {
         let handle = tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
-                    Ok(ScanMessage::Result(result)) => {
-                        log::info!("[LogConsumer] Scan result: {:?}", result);
+                    Ok(ScanMessage::Result(_result)) => {
                     }
                     Ok(ScanMessage::Complete) => {
-                        log::info!("[LogConsumer] Scan completed");
                         break;
                     }
+                    Ok(ScanMessage::Config(_)) => {
+                    }
                     Err(broadcast::error::RecvError::Closed) => {
-                        log::warn!("[LogConsumer] Channel closed");
                         break;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        log::warn!("[LogConsumer] Channel lagged, skipping messages");
                         continue;
                     }
                 }

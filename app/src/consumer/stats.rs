@@ -65,6 +65,7 @@ impl ScanStats {
     }
 
     /// 从另一个ScanStats合并统计信息（保留显示元数据）
+    #[allow(dead_code)]
     pub fn merge_from(&mut self, other: &ScanStats) {
         self.total_files = other.total_files;
         self.total_dirs = other.total_dirs;
@@ -279,6 +280,7 @@ impl StatsCalculator {
     }
 
     /// 获取文件名长度
+    #[allow(dead_code)]
     pub fn get_name_length(&self, path: &Path) -> usize {
         path.file_name()
             .and_then(|n| n.to_str())

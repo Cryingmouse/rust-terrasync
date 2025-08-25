@@ -14,20 +14,19 @@ impl Consumer for DatabaseConsumer {
         let handle = tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
-                    Ok(ScanMessage::Result(result)) => {
+                    Ok(ScanMessage::Result(_result)) => {
                         // TODO: 实现数据库保存逻辑
-                        log::info!("[DatabaseConsumer] Saving result to database: {:?}", result);
+                    }
+                    Ok(ScanMessage::Config(_)) => {
+                        // Database consumer can ignore config messages
                     }
                     Ok(ScanMessage::Complete) => {
-                        log::info!("[DatabaseConsumer] Scan completed");
                         break;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
-                        log::warn!("[DatabaseConsumer] Channel closed");
                         break;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        log::warn!("[DatabaseConsumer] Channel lagged, skipping messages");
                         continue;
                     }
                 }

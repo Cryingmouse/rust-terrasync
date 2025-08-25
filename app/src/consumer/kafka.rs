@@ -14,20 +14,17 @@ impl Consumer for KafkaConsumer {
         let handle = tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
-                    Ok(ScanMessage::Result(result)) => {
+                    Ok(ScanMessage::Result(_result)) => {
                         // TODO: 实现通知逻辑
-                        log::info!("[KafkaConsumer] Sending notification for: {:?}", result);
                     }
                     Ok(ScanMessage::Complete) => {
-                        log::info!("[KafkaConsumer] Scan completed");
                         break;
                     }
+                    Ok(ScanMessage::Config(_)) => {}
                     Err(broadcast::error::RecvError::Closed) => {
-                        log::warn!("[KafkaConsumer] Channel closed");
                         break;
                     }
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        log::warn!("[KafkaConsumer] Channel lagged, skipping messages");
                         continue;
                     }
                 }

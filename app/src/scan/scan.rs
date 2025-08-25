@@ -146,6 +146,8 @@ pub struct StorageEntity {
 pub enum ScanMessage {
     Result(StorageEntity),
     Complete,
+    /// 扫描配置信息
+    Config(ScanConfig),
 }
 
 /// 主扫描函数 - 入口点
@@ -167,16 +169,18 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     let consumer_handles = consumer_manager.start_consumers().await?;
 
     // 创建队列通道
-    let (tx, mut rx) = mpsc::channel::<ScanMessage>(10000);
+    let (tx, mut rx) = mpsc::channel::<ScanMessage>(1000);
 
     // 获取广播发送器
     let broadcaster = consumer_manager.get_broadcaster();
 
+    // 发送配置信息给所有消费者
+    if let Err(e) = broadcaster.send(ScanMessage::Config(config.clone())) {
+        log::error!("Failed to broadcast scan config: {}", e);
+    }
+
     // 启动walkdir任务（仅生成ScanResults）
     let walkdir_handle = tokio::spawn(async move { walkdir(config, tx).await });
-
-    // 处理队列消息并广播给消费者
-    println!("terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.");
 
     loop {
         match rx.recv().await {
@@ -191,6 +195,9 @@ pub async fn scan(params: ScanParams) -> Result<()> {
                 let _ = broadcaster.send(ScanMessage::Complete);
 
                 break;
+            }
+            Some(ScanMessage::Config(_)) => {
+                // 忽略配置消息，已在前面的步骤处理
             }
             None => {
                 log::warn!("Channel closed unexpectedly");
