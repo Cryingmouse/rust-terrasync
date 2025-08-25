@@ -12,8 +12,8 @@ pub const SCAN_STATE_TABLE_BASE_NAME: &str = "scan_state";
 pub use clickhouse::ClickHouseDatabase;
 pub use config::{ClickHouseConfig, DatabaseConfig, DatabaseType};
 pub use error::{DatabaseError, Result};
-pub use factory::{create_database, DatabaseFactory};
-pub use traits::{ColumnInfo, Database, QueryResult, TableSchema};
+pub use factory::{DatabaseFactory, create_database};
+pub use traits::{Database, QueryResult};
 
 /// 根据job_id生成扫描基础表名
 pub fn get_scan_base_table_name(job_id: &str) -> String {

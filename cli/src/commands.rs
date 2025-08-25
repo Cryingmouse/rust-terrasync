@@ -1,5 +1,5 @@
 use crate::sanitize_job_id;
-use app::scan::{scan, ScanParams};
+use app::scan::{ScanParams, scan};
 use chrono::Local;
 use std::fs;
 use std::path::Path;
@@ -51,11 +51,7 @@ pub async fn scan_cmd(
     Ok(())
 }
 
-pub async fn sync_cmd(verbose: bool, _config: Option<String>) -> utils::error::Result<()> {
-    if verbose {
-        std::env::set_var("RUST_LOG", "debug");
-    }
-
+pub async fn sync_cmd(_verbose: bool, _config: Option<String>) -> utils::error::Result<()> {
     let _config = AppConfig::fetch()?;
     log::info!("Starting sync operation...");
 

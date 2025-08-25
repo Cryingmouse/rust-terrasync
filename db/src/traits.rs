@@ -11,21 +11,6 @@ pub struct QueryResult {
     pub last_insert_id: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TableSchema {
-    pub name: String,
-    pub columns: Vec<ColumnInfo>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnInfo {
-    pub name: String,
-    pub data_type: String,
-    pub nullable: bool,
-    pub default_value: Option<String>,
-    pub is_primary_key: bool,
-}
-
 /// 文件扫描事件结构体 - 统一的数据结构
 #[derive(Debug, Clone, Serialize, Deserialize, clickhouse::Row)]
 pub struct FileScanRecord {
@@ -78,8 +63,8 @@ pub trait Database: Send + Sync {
     /// 获取当前临时表名
     fn get_scan_temp_table_name(&self) -> Option<&str>;
 
-    /// 异步插入单个文件扫描事件到scan_base表
-    async fn insert_file_record_async(&self, event: FileScanRecord) -> Result<()>;
+    /// 同步批量插入数据到base表
+    async fn batch_insert_base_record_sync(&self, records: Vec<FileScanRecord>) -> Result<()>;
 
     /// 查询scan_base表，支持指定列查询
     async fn query_scan_base_table(&self, columns: &[&str]) -> Result<Vec<FileScanRecord>>;
@@ -89,4 +74,6 @@ pub trait Database: Send + Sync {
 
     /// 切换scan_state表状态
     async fn switch_scan_state(&self) -> Result<()>;
+
+    async fn insert_scan_state_sync(&self, origin_state: u8) -> Result<()>;
 }

@@ -21,7 +21,7 @@ fn format_permissions(mode: u32) -> String {
 use utils::error::Result;
 
 use crate::consumer::ConsumerManager;
-use crate::scan::filter::{evaluate_filter, parse_filter_expression, FilterExpression};
+use crate::scan::filter::{FilterExpression, evaluate_filter, parse_filter_expression};
 
 /// 辅助函数：解析表达式列表
 fn parse_expressions(expressions: &[String]) -> Result<Vec<FilterExpression>> {
@@ -169,6 +169,7 @@ pub struct ScanConfig {
 pub struct StorageEntity {
     pub file_name: String,
     pub file_path: String,
+    pub extension: Option<String>,
     pub is_dir: bool,
     pub is_symlink: bool,
     pub size: u64,
@@ -202,7 +203,7 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     log::info!("Scan configuration: {:?}", config);
 
     // 创建消费者管理器（使用默认配置）
-    let mut consumer_manager = ConsumerManager::new();
+    let mut consumer_manager = ConsumerManager::new(true, false);
 
     // 启动所有消费者
     let consumer_handles = consumer_manager.start_consumers().await?;
@@ -225,20 +226,24 @@ pub async fn scan(params: ScanParams) -> Result<()> {
         match rx.recv().await {
             Some(ScanMessage::Result(result)) => {
                 // 广播扫描结果给所有消费者
+                // print!("send result message to all consumers!!");
                 if let Err(e) = broadcaster.send(ScanMessage::Result(result.clone())) {
                     log::error!("Failed to broadcast scan result: {}", e);
                 }
             }
             Some(ScanMessage::Complete) => {
+                print!("send complete message to all consumers!!");
                 // 广播完成消息给所有消费者，忽略错误
                 let _ = broadcaster.send(ScanMessage::Complete);
 
                 break;
             }
             Some(ScanMessage::Config(_)) => {
+                print!("send config message to all consumers!!");
                 // 忽略配置消息，已在前面的步骤处理
             }
             None => {
+                print!("Channel closed unexpectedly");
                 log::warn!("Channel closed unexpectedly");
                 // 广播完成消息给所有消费者
                 let _ = broadcaster.send(ScanMessage::Complete);
@@ -342,6 +347,11 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
             file_name,
             file_path,
             is_dir,
+            extension: if extension.is_empty() {
+                None
+            } else {
+                Some(String::from(extension))
+            },
             is_symlink,
             size,
             atime,

@@ -1,5 +1,5 @@
-use crate::consumer::stats::{ScanStats, StatsCalculator};
 use crate::consumer::Consumer;
+use crate::consumer::stats::{ScanStats, StatsCalculator};
 use crate::scan::ScanMessage;
 use std::path::Path;
 use std::time::Instant;
@@ -23,7 +23,7 @@ impl Consumer for ConsoleConsumer {
             let mut config_received = false;
 
             // 处理队列消息并广播给消费者
-            println!("terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.");
+            println!("🚀 terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.\n");
 
             loop {
                 match receiver.recv().await {

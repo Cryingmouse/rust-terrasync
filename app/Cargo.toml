@@ -1,26 +1,19 @@
 [package]
 name = "app"
-version = "2.0.1"
+version = "0.1.0"
 authors = ["Abid Omar <contact@omarabid.com>"]
 description = "The application core code"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 utils = { path = "../utils" }
 storage = { path = "../storage" }
 db = { path = "../db" }
-
-rand = "0.9.1"
 log = "0.4.27"
 serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.138"
 tokio = { version = "1.0", features = ["full"] }
-tokio-mpmc = "0.2.4"
-walkdir = "2.4"
 chrono = { version = "0.4", features = ["serde"] }
-toml = "0.8"
 async-trait = "0.1.86"
+uuid = "1.18.0"
 
 [dev-dependencies]
-tempfile = "3.10"
-env_logger = "0.11"

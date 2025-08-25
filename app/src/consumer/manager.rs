@@ -1,9 +1,9 @@
 use tokio::sync::broadcast;
 use utils::error::Result;
 
-use crate::scan::ScanMessage;
 use crate::consumer::config::ConsumerConfig;
-use crate::consumer::{Consumer, ConsoleConsumer, DatabaseConsumer, KafkaConsumer, LogConsumer};
+use crate::consumer::{ConsoleConsumer, Consumer, DatabaseConsumer, KafkaConsumer, LogConsumer};
+use crate::scan::ScanMessage;
 
 /// 消费者管理器 - 管理多个消费者
 pub struct ConsumerManager {
@@ -15,8 +15,8 @@ pub struct ConsumerManager {
 
 impl ConsumerManager {
     /// 创建新的消费者管理器
-    pub fn new() -> Self {
-        Self::with_config(&ConsumerConfig::default())
+    pub fn new( enable_database_consumer: bool, enable_kafka_consumer: bool) -> Self {
+        Self::with_config(&ConsumerConfig::enable_consumer(enable_database_consumer, enable_kafka_consumer))
     }
 
     /// 根据配置创建消费者管理器

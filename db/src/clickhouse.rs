@@ -138,31 +138,6 @@ impl ClickHouseDatabase {
         );
         Ok(dropped_tables)
     }
-
-    /// 同步插入scan_state表，id固定为1
-    pub async fn insert_scan_state_sync(&self, origin_state: u8) -> Result<()> {
-        let table_name = get_scan_state_table_name(&self.job_id);
-        let insert_sql = format!(
-            "INSERT INTO {} (id, origin_state) VALUES (?, ?)",
-            table_name
-        );
-
-        debug!("Inserting scan state: id=1, origin_state={}", origin_state);
-
-        self.sync_client
-            .query(&insert_sql)
-            .bind(1u8)
-            .bind(origin_state)
-            .execute()
-            .await
-            .map_err(|e| DatabaseError::ClickHouseError(e))?;
-
-        debug!(
-            "Inserted scan state record: id=1, origin_state={}",
-            origin_state
-        );
-        Ok(())
-    }
 }
 
 #[async_trait]
@@ -355,25 +330,40 @@ impl Database for ClickHouseDatabase {
         self.scan_temp_table_name.as_deref()
     }
 
-    /// 异步插入单个文件扫描事件
-    async fn insert_file_record_async(&self, record: FileScanRecord) -> Result<()> {
-        let table_name = get_scan_base_table_name(&self.job_id);
+    async fn batch_insert_base_record_sync(&self, records: Vec<FileScanRecord>) -> Result<()> {
+        let base_table_name = get_scan_base_table_name(&self.job_id);
+
+        if records.is_empty() {
+            debug!("No events to insert");
+            return Ok(());
+        }
+
+        let record_count = records.len();
+
+        // 使用标准insert方法进行批量插入
         let mut insert = self
-            .async_client
-            .insert::<FileScanRecord>(&table_name)
+            .sync_client
+            .insert(&base_table_name)
             .map_err(|e| DatabaseError::ClickHouseError(e))?;
 
-        insert
-            .write(&record)
-            .await
-            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+        // 批量写入所有记录
+        for record in &records {
+            insert
+                .write(record)
+                .await
+                .map_err(|e| DatabaseError::ClickHouseError(e))?;
+        }
 
+        // 确保最终完成
         insert
             .end()
             .await
             .map_err(|e| DatabaseError::ClickHouseError(e))?;
 
-        debug!("Async inserted 1 file event");
+        debug!(
+            "Successfully inserted {} events to temporary table",
+            record_count
+        );
         Ok(())
     }
 
@@ -435,6 +425,31 @@ impl Database for ClickHouseDatabase {
 
         debug!("Switched scan state: {} -> {}", current_state, new_state);
 
+        Ok(())
+    }
+
+    /// 同步插入scan_state表，id固定为1
+    async fn insert_scan_state_sync(&self, origin_state: u8) -> Result<()> {
+        let table_name = get_scan_state_table_name(&self.job_id);
+        let insert_sql = format!(
+            "INSERT INTO {} (id, origin_state) VALUES (?, ?)",
+            table_name
+        );
+
+        debug!("Inserting scan state: id=1, origin_state={}", origin_state);
+
+        self.sync_client
+            .query(&insert_sql)
+            .bind(1u8)
+            .bind(origin_state)
+            .execute()
+            .await
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+
+        debug!(
+            "Inserted scan state record: id=1, origin_state={}",
+            origin_state
+        );
         Ok(())
     }
 }

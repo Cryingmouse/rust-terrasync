@@ -1,15 +1,14 @@
 [package]
 name = "cli"
-version = "2.0.1"
+version = "0.1.0"
 authors = ["Abid Omar <contact@omarabid.com>"]
 description = "CLI interface for rust-terrasync"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 utils = { path = "../utils" }
 app = { path = "../app" }
 log = "0.4.21"
-env_logger = "0.11.5"
 chrono = "0.4.38"
 
 [dependencies.clap]
@@ -17,5 +16,3 @@ version = "4.5.37"
 features = ["cargo", "derive"]
 
 [dev-dependencies]
-assert_cmd = "2.0.17"
-predicates = "3.1.3"
