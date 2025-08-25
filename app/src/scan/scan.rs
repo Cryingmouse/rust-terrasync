@@ -170,8 +170,8 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     // 获取广播发送器
     let broadcaster = consumer_manager.get_broadcaster();
 
-    // 启动walkdir任务（现在仅生成ScanResults）
-    let walkdir_handle = tokio::spawn(async move { walkdir(config, tx).await });
+    // 启动walkdir任务（仅生成ScanResults）
+    let walkdir_handle = tokio::spawn(async move { sanitize_storage_entity(config, tx).await });
 
     // 处理队列消息并广播给消费者
     println!("terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.");
@@ -218,7 +218,9 @@ pub async fn scan(params: ScanParams) -> Result<()> {
 }
 
 /// 目录遍历函数 - 遍历目录并发送结果到队列（仅生成ScanResult，不计算统计信息）
-pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Result<()> {
+pub async fn sanitize_storage_entity(
+    config: ScanConfig, tx: mpsc::Sender<ScanMessage>,
+) -> Result<()> {
     let scan_path = &config.params.path;
     let depth = if config.params.depth > 0 {
         Some(config.params.depth as usize)
