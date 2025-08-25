@@ -66,6 +66,9 @@ pub trait Database: Send + Sync {
     /// 同步批量插入数据到base表
     async fn batch_insert_base_record_sync(&self, records: Vec<FileScanRecord>) -> Result<()>;
 
+    /// 异步批量插入数据到base表
+    async fn batch_insert_base_record_async(&self, records: Vec<FileScanRecord>) -> Result<()>;
+
     /// 查询scan_base表，支持指定列查询
     async fn query_scan_base_table(&self, columns: &[&str]) -> Result<Vec<FileScanRecord>>;
 

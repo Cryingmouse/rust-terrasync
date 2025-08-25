@@ -13,7 +13,7 @@ concurrency = 1          # Concurrency level for migration operations (default: 
 [database]
 enabled = true           # Enable Database integration
 type = "clickhouse"      # Database type: "sqlite", "sqlite-memory", "clickhouse"
-batch_size = 600000      # Batch size for file entries. Recommended: 10000 for sqlite, 600000 for clickhouse
+batch_size = 100000      # Batch size for file entries. Recommended: 10000 for sqlite, 100000 for clickhouse
 
 [database.clickhouse]
 # ClickHouse specific configuration

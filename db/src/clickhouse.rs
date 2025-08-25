@@ -12,6 +12,7 @@ use crate::{generate_scan_temp_table_name, get_scan_base_table_name, get_scan_st
 
 pub struct ClickHouseDatabase {
     sync_client: Client,
+    async_client: Client,
     job_id: String,
     scan_temp_table_name: Option<String>,
 }
@@ -37,16 +38,24 @@ impl ClickHouseDatabase {
         // 创建同步客户端
         let mut sync_client = Client::default()
             .with_url(&config.dsn)
-            .with_database(config.database)
-            .with_user(config.username);
+            .with_database(config.database.clone())
+            .with_user(config.username.clone());
+        let mut async_client = Client::default()
+            .with_url(&config.dsn)
+            .with_database(config.database.clone())
+            .with_user(config.username.clone())
+            .with_option("async_insert", "1")
+            .with_option("wait_for_async_insert", "1");
 
         // 可选的密码配置
         if let Some(password) = &config.password {
             sync_client = sync_client.with_password(password);
+            async_client = async_client.with_password(password);
         }
 
         Self {
             sync_client,
+            async_client,
             job_id,
             scan_temp_table_name: None,
         }
@@ -344,7 +353,44 @@ impl Database for ClickHouseDatabase {
             .map_err(|e| DatabaseError::ClickHouseError(e))?;
 
         debug!(
-            "Successfully inserted {} events to temporary table",
+            "Successfully inserted {} events to base table",
+            record_count
+        );
+        Ok(())
+    }
+
+    async fn batch_insert_base_record_async(&self, records: Vec<FileScanRecord>) -> Result<()> {
+        let base_table_name = get_scan_base_table_name(&self.job_id);
+
+        if records.is_empty() {
+            debug!("No events to insert");
+            return Ok(());
+        }
+
+        let record_count = records.len();
+
+        // 使用标准insert方法进行批量插入
+        let mut insert = self
+            .async_client
+            .insert(&base_table_name)
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+
+        // 批量写入所有记录
+        for record in &records {
+            insert
+                .write(record)
+                .await
+                .map_err(|e| DatabaseError::ClickHouseError(e))?;
+        }
+
+        // 确保最终完成
+        insert
+            .end()
+            .await
+            .map_err(|e| DatabaseError::ClickHouseError(e))?;
+
+        debug!(
+            "Successfully inserted {} events to base table",
             record_count
         );
         Ok(())

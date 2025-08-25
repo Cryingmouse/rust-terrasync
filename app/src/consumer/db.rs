@@ -20,8 +20,8 @@ impl Consumer for DatabaseConsumer {
         let handle = tokio::spawn(async move {
             let mut database: Option<Arc<dyn Database>> = None;
             let mut batch_size: Option<u32> = None;
-            let mut current_batch = Vec::with_capacity(batch_size.unwrap_or(400_000) as usize);
-            let mut next_batch = Vec::with_capacity(batch_size.unwrap_or(400_000) as usize);
+            let mut current_batch = Vec::with_capacity(batch_size.unwrap_or(100_000) as usize);
+            let mut next_batch = Vec::with_capacity(batch_size.unwrap_or(100_000) as usize);
 
             loop {
                 match receiver.recv().await {
@@ -82,7 +82,7 @@ impl Consumer for DatabaseConsumer {
                                         batch_to_insert.len()
                                     );
                                     if let Err(e) = db_clone
-                                        .batch_insert_base_record_sync(batch_to_insert)
+                                        .batch_insert_base_record_async(batch_to_insert)
                                         .await
                                     {
                                         log::error!(
