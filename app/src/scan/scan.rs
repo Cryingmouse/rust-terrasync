@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use std::time::SystemTime;
 use storage::Storage;
 use tokio::sync::mpsc;
+use tokio_mpmc::Queue;
 use utils::error::Result;
 
 use crate::consumer::ConsumerManager;
@@ -171,7 +173,7 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     let broadcaster = consumer_manager.get_broadcaster();
 
     // 启动walkdir任务（仅生成ScanResults）
-    let walkdir_handle = tokio::spawn(async move { sanitize_storage_entity(config, tx).await });
+    let walkdir_handle = tokio::spawn(async move { walkdir(config, tx).await });
 
     // 处理队列消息并广播给消费者
     println!("terrasync 3.0.0; (c) 2025 LenovoNetapp, Inc.");
@@ -217,10 +219,8 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     Ok(())
 }
 
-/// 目录遍历函数 - 遍历目录并发送结果到队列（仅生成ScanResult，不计算统计信息）
-pub async fn sanitize_storage_entity(
-    config: ScanConfig, tx: mpsc::Sender<ScanMessage>,
-) -> Result<()> {
+/// 目录遍历函数 - 遍历目录并发送结果到队列（使用tokio-mpmc多消费者并发处理）
+pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Result<()> {
     let scan_path = &config.params.path;
     let depth = if config.params.depth > 0 {
         Some(config.params.depth as usize)
@@ -239,76 +239,132 @@ pub async fn sanitize_storage_entity(
     // 使用Storage trait的统一接口获取遍历器
     let mut rx = storage_type.walkdir(None, depth).await;
 
-    // 处理每个StorageEntry
-    while let Some(entry) = rx.recv().await {
-        let file_name = entry.name;
-        let file_path = entry.path;
+    // 创建tokio-mpmc队列用于StorageEntry的并发处理
+    let entry_queue = Arc::new(Queue::<storage::StorageEntry>::new(10000));
+    let config = Arc::new(config);
+    let tx = Arc::new(tx);
 
-        // 标准化路径分隔符，使用正斜杠跨平台兼容
-        let file_path = file_path.replace('\\', "/");
+    // 启动多个消费者任务，根据CPU核心数动态调整
+    let num_consumers = std::thread::available_parallelism()
+        .map(|n| n.get().max(2)) // 至少2个消费者
+        .unwrap_or(4); // 获取失败时默认4个
+    let mut consumer_handles = Vec::new();
 
-        // 直接从StorageEntry获取文件信息
-        let is_dir = entry.is_dir;
-        let is_symlink = entry.is_symlink.unwrap_or(false);
-        let size = entry.size;
+    for consumer_id in 0..num_consumers {
+        let consumer_queue = entry_queue.clone();
+        let config = Arc::clone(&config);
+        let tx = Arc::clone(&tx);
 
-        // 获取文件时间信息
-        let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
-        let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
-        let mtime = entry.modified;
+        let handle = tokio::spawn(async move {
+            while let Ok(Some(entry)) = consumer_queue.receive().await {
+                let file_name = entry.name;
+                let file_path = entry.path;
 
-        // 计算修改时间（天数）
-        let modified_days = {
-            let now = SystemTime::now();
-            now.duration_since(mtime)
-                .map(|duration| duration.as_secs_f64() / 86400.0)
-                .unwrap_or(0.0)
-        };
+                // 标准化路径分隔符，使用正斜杠跨平台兼容
+                let file_path = file_path.replace('\\', "/");
 
-        // 获取文件扩展名
-        let extension = std::path::Path::new(&file_path)
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("")
-            .to_lowercase();
+                // 直接从StorageEntry获取文件信息
+                let is_dir = entry.is_dir;
+                let is_symlink = entry.is_symlink.unwrap_or(false);
+                let size = entry.size;
 
-        let file_type = if is_dir { "dir" } else { "file" };
+                // 获取文件时间信息
+                let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
+                let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
+                let mtime = entry.modified;
 
-        // 应用过滤条件
-        let (matched, excluded) = evaluate_filter_conditions(
-            &config.expressions,
-            &config.exclude_expressions,
-            &file_name,
-            &file_path,
-            file_type,
-            modified_days,
-            size,
-            &extension,
-        );
+                // 计算修改时间（天数）
+                let modified_days = {
+                    let now = SystemTime::now();
+                    now.duration_since(mtime)
+                        .map(|duration| duration.as_secs_f64() / 86400.0)
+                        .unwrap_or(0.0)
+                };
 
-        // 创建扫描结果
-        let scan_result = StorageEntity {
-            file_name,
-            file_path,
-            is_dir,
-            is_symlink,
-            size,
-            matched,
-            excluded,
-            atime,
-            ctime,
-            mtime,
-        };
+                // 获取文件扩展名
+                let extension = std::path::Path::new(&file_path)
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
 
-        if matched && !excluded {
-            log::debug!("Matched file: {:?}", scan_result);
-        } else if !config.expressions.is_empty() {
-            log::debug!("Filtered file: {:?}", scan_result);
+                let file_type = if is_dir { "dir" } else { "file" };
+
+                // 应用过滤条件
+                let (matched, excluded) = evaluate_filter_conditions(
+                    &config.expressions,
+                    &config.exclude_expressions,
+                    &file_name,
+                    &file_path,
+                    file_type,
+                    modified_days,
+                    size,
+                    &extension,
+                );
+
+                // 创建扫描结果
+                let scan_result = StorageEntity {
+                    file_name,
+                    file_path,
+                    is_dir,
+                    is_symlink,
+                    size,
+                    matched,
+                    excluded,
+                    atime,
+                    ctime,
+                    mtime,
+                };
+
+                if matched && !excluded {
+                    log::debug!("Consumer {} - Matched file: {:?}", consumer_id, scan_result);
+                } else if !config.expressions.is_empty() {
+                    log::debug!(
+                        "Consumer {} - Filtered file: {:?}",
+                        consumer_id,
+                        scan_result
+                    );
+                }
+
+                // 发送ScanResult到队列
+                if let Err(e) = tx.send(ScanMessage::Result(scan_result)).await {
+                    log::error!(
+                        "Consumer {} - Failed to send scan result: {}",
+                        consumer_id,
+                        e
+                    );
+                    break;
+                }
+            }
+        });
+
+        consumer_handles.push(handle);
+    }
+
+    // 生产者任务：将StorageEntry发送到MPMC队列
+    let _producer_config = Arc::clone(&config);
+    let _producer_tx = Arc::clone(&tx);
+    let producer_queue = Arc::clone(&entry_queue);
+
+    let producer_handle = tokio::spawn(async move {
+        while let Some(entry) = rx.recv().await {
+            if let Err(e) = producer_queue.send(entry).await {
+                log::error!("Failed to send entry to MPMC queue: {}", e);
+                break;
+            }
         }
 
-        // 发送ScanResult到队列
-        send_message(&tx, ScanMessage::Result(scan_result)).await?;
+        // 关闭队列，通知所有消费者
+        producer_queue.close();
+    });
+
+    // 等待所有消费者完成
+    for handle in consumer_handles {
+        let _ = handle.await;
     }
+
+    // 等待生产者完成
+    let _ = producer_handle.await;
 
     // 通道关闭，发送完成消息
     send_message(&tx, ScanMessage::Complete).await?;
