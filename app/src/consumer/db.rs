@@ -5,7 +5,6 @@ use db::factory::create_database;
 use db::traits::Database;
 use db::traits::FileScanRecord;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::sync::broadcast;
 use utils::error::Result;
 

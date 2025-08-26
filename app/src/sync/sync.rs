@@ -69,8 +69,6 @@ pub async fn sync(params: SyncParams) -> Result<()> {
     loop {
         match rx.recv().await {
             Some(ScanMessage::Result(_result)) => {
-                println!("{:?}", _result.file_name);
-
                 // 2. 将_result写入CH数据库
                 // 3. broadcast _result 给消费者
             }

@@ -128,10 +128,13 @@ async fn test_nfs_walkdir_performance() {
                     format!("{:.1} GB", entry.size as f64 / 1024.0 / 1024.0 / 1024.0)
                 };
 
-                let format_time = |time: std::time::SystemTime| -> String {
-                    chrono::DateTime::<chrono::Local>::from(time)
-                        .format("%Y-%m-%d %H:%M:%S")
-                        .to_string()
+                let format_time = |time: Option<i64>| -> String {
+                    time.map(|ts| {
+                        let system_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_millis(ts as u64);
+                        chrono::DateTime::<chrono::Local>::from(system_time)
+                            .format("%Y-%m-%d %H:%M:%S")
+                            .to_string()
+                    }).unwrap_or_else(|| "Unknown".to_string())
                 };
 
                 let name_display = if entry.name.len() > 24 { 
