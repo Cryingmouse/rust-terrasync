@@ -3,9 +3,9 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tempfile::TempDir;
 
-use storage::{create_storage, parse_nfs_path, LocalStorage, NFSStorage, Storage, StorageType};
-
-
+use storage::file::LocalStorage;
+use storage::nfs::{NFSStorage, parse_nfs_path};
+use storage::{Storage, StorageType, create_storage};
 
 /// 测试NFS存储的并发扫描性能（带超时和计数限制）
 #[tokio::test]

@@ -1,4 +1,4 @@
-use storage::parse_nfs_path;
+use storage::nfs::parse_nfs_path;
 
 #[cfg(test)]
 mod tests {

@@ -181,6 +181,7 @@ pub struct ConsumerConfig {
 pub struct StorageEntity {
     pub file_name: String,
     pub file_path: String,
+    pub relative_path: String,
     pub extension: Option<String>,
     pub is_dir: bool,
     pub is_symlink: bool,
@@ -313,10 +314,7 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
     // 直接处理每个StorageEntry
     while let Some(entry) = rx.recv().await {
         let file_name = entry.name;
-        let mut file_path = entry.path;
-
-        // 标准化路径分隔符，使用正斜杠跨平台兼容
-        file_path = file_path.replace('\\', "/");
+        let file_path = entry.path;
 
         // 直接从StorageEntry获取文件信息
         let is_dir = entry.is_dir;
@@ -368,6 +366,7 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
         let scan_result = StorageEntity {
             file_name,
             file_path,
+            relative_path: entry.relative_path,
             is_dir,
             extension: if extension.is_empty() {
                 None

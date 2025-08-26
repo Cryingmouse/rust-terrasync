@@ -1,7 +1,8 @@
+use std::path::PathBuf;
+
 use std::future::Future;
 use std::pin::Pin;
 
-use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 
 use nfs3_client::Nfs3ConnectionBuilder;
@@ -11,20 +12,162 @@ use nfs3_client::nfs3_types::rpc::{auth_unix, opaque_auth};
 use nfs3_client::nfs3_types::xdr_codec::Opaque;
 use nfs3_client::tokio::TokioConnector;
 
+use crate::common::get_relative_path;
+
 // 类型别名，简化复杂类型
 pub type NfsConnection =
     nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>;
 pub type NfsResult<T> = Result<T, Box<dyn std::error::Error>>;
 pub type RecursiveFuture<'a> = Pin<Box<dyn Future<Output = NfsResult<()>> + Send + 'a>>;
 
-#[derive(Debug, Clone)]
-pub struct NFSEntry {
-    pub name: String,
-    pub path: String,
-    pub is_dir: bool,
-    pub size: u64,
-    pub modified: DateTime<Utc>,
-    pub nfs_fh3: nfs3::nfs_fh3,
+/// 解析NFS路径，返回服务器IP、端口和挂载路径
+///
+/// 支持以下格式：
+/// - nfs://server/path
+/// - nfs://server:port/path
+/// - server:port:path (传统格式)
+/// - server:path (简写格式，使用默认端口)
+/// - server (仅服务器，使用默认端口和根路径)
+///
+/// # Arguments
+/// * `nfs_path` - NFS路径字符串
+///
+/// # Returns
+/// 返回一个三元组：(服务器IP, 端口, 路径)
+///
+/// # Panics
+/// 如果路径格式无效，将panic并显示支持的格式
+pub fn parse_nfs_path(nfs_path: &str) -> (String, u16, String) {
+    let nfs_path = nfs_path.trim();
+
+    if nfs_path.is_empty() {
+        panic!("无效的NFS路径: 空字符串");
+    }
+
+    // 处理nfs://格式的路径
+    if let Some(stripped) = nfs_path.strip_prefix("nfs://") {
+        return parse_nfs_url_format(stripped);
+    }
+
+    // 处理传统格式 (server:port:path 或 server:path)
+    parse_nfs_traditional_format(nfs_path)
+}
+
+/// 解析nfs://server/path格式的路径
+fn parse_nfs_url_format(path_without_prefix: &str) -> (String, u16, String) {
+    // 查找第一个斜杠来分离服务器和路径
+    let slash_pos = path_without_prefix
+        .find('/')
+        .unwrap_or_else(|| panic!("无效的NFS URL格式: 缺少路径部分"));
+
+    let server_part = &path_without_prefix[..slash_pos];
+    let path_part = &path_without_prefix[slash_pos..];
+
+    // 确保路径以斜杠开头
+    if !path_part.starts_with('/') {
+        panic!("无效的NFS路径: 路径必须以斜杠开头");
+    }
+
+    // 解析服务器和端口
+    let (server, port) = parse_server_and_port(server_part);
+
+    (server, port, path_part.to_string())
+}
+
+/// 解析传统格式的NFS路径
+fn parse_nfs_traditional_format(nfs_path: &str) -> (String, u16, String) {
+    let parts: Vec<&str> = nfs_path.split(':').collect();
+
+    match parts.len() {
+        0 => panic!("无效的NFS路径: 空字符串"),
+        1 => {
+            // 只有服务器名，使用默认端口和根路径
+            let server = parts[0].trim();
+            if server.is_empty() {
+                panic!("无效的NFS路径: 服务器名不能为空");
+            }
+            (server.to_string(), PMAP_PORT, "/".to_string())
+        }
+        2 => {
+            // server:path 格式
+            let server = parts[0].trim();
+            let path = parts[1].trim();
+
+            if server.is_empty() {
+                panic!("无效的NFS路径: 服务器名不能为空");
+            }
+            if path.is_empty() {
+                panic!("无效的NFS路径: 路径不能为空");
+            }
+
+            // 确保路径以斜杠开头
+            let normalized_path = if path.starts_with('/') {
+                path.to_string()
+            } else {
+                format!("/{}", path)
+            };
+
+            (server.to_string(), PMAP_PORT, normalized_path)
+        }
+        _ => {
+            // server:port:path 格式
+            let server = parts[0].trim();
+            let port_str = parts[1].trim();
+            let path = parts[2..].join(":");
+            let path = path.trim();
+
+            if server.is_empty() {
+                panic!("无效的NFS路径: 服务器名不能为空");
+            }
+            if port_str.is_empty() {
+                panic!("无效的NFS路径: 端口号不能为空");
+            }
+            if path.is_empty() {
+                panic!("无效的NFS路径: 路径不能为空");
+            }
+
+            let port = port_str
+                .parse::<u16>()
+                .unwrap_or_else(|_| panic!("无效的端口号: {}", port_str));
+
+            // 确保路径以斜杠开头
+            let normalized_path = if path.starts_with('/') {
+                path.to_string()
+            } else {
+                format!("/{}", path)
+            };
+
+            (server.to_string(), port, normalized_path)
+        }
+    }
+}
+
+/// 解析服务器地址和端口
+fn parse_server_and_port(server_part: &str) -> (String, u16) {
+    let server_part = server_part.trim();
+    if server_part.is_empty() {
+        panic!("无效的NFS路径: 服务器名不能为空");
+    }
+
+    if let Some(colon_pos) = server_part.find(':') {
+        let server = server_part[..colon_pos].trim();
+        let port_str = server_part[colon_pos + 1..].trim();
+
+        if server.is_empty() {
+            panic!("无效的NFS路径: 服务器名不能为空");
+        }
+        if port_str.is_empty() {
+            panic!("无效的NFS路径: 端口号不能为空");
+        }
+
+        let port = port_str
+            .parse::<u16>()
+            .unwrap_or_else(|_| panic!("无效的端口号: {}", port_str));
+
+        (server.to_string(), port)
+    } else {
+        (server_part.to_string(), PMAP_PORT)
+    }
 }
 
 pub struct NFSStorage {
@@ -54,7 +197,7 @@ impl NFSStorage {
 
         tokio::spawn(async move {
             if let Err(e) =
-                Self::list_directory_internal(&server_ip, portmapper_port, &dir_path, tx).await
+                Self::list_dir_internal(&server_ip, portmapper_port, &dir_path, tx).await
             {
                 eprintln!("Error in list_directory: {}", e);
             }
@@ -63,7 +206,7 @@ impl NFSStorage {
         Ok(rx)
     }
 
-    async fn list_directory_internal(
+    async fn list_dir_internal(
         server_ip: &str, portmapper_port: u16, dir_path: &str,
         tx: mpsc::UnboundedSender<crate::StorageEntry>,
     ) -> NfsResult<()> {
@@ -158,7 +301,7 @@ impl NFSStorage {
 
             let dir_handler = connection.root_nfs_fh3();
 
-            if let Err(e) = Self::list_directory_recursive_internal(
+            if let Err(e) = Self::list_dir_recursive_internal(
                 &mut connection,
                 &dir_path,
                 &dir_handler,
@@ -177,7 +320,7 @@ impl NFSStorage {
         rx
     }
 
-    fn list_directory_recursive_internal<'a>(
+    fn list_dir_recursive_internal<'a>(
         connection: &'a mut NfsConnection, dir_path: &'a str, dir_handle: &'a nfs3::nfs_fh3,
         tx: tokio::sync::mpsc::Sender<crate::StorageEntry>, current_depth: usize, max_depth: usize,
     ) -> RecursiveFuture<'a> {
@@ -216,7 +359,7 @@ impl NFSStorage {
                     // If it's a directory, recurse only if max_depth allows
                     if is_dir && (max_depth == 0 || current_depth < max_depth - 1) {
                         if let Nfs3Option::Some(child_handle) = entry.name_handle.clone() {
-                            if let Err(e) = Self::list_directory_recursive_internal(
+                            if let Err(e) = Self::list_dir_recursive_internal(
                                 connection,
                                 &full_path,
                                 &child_handle,
@@ -267,7 +410,7 @@ impl NFSStorage {
         secs_as_nanos.checked_add(nseconds.into())
     }
 
-    /// 统一的StorageEntry构建函数，用于list_directory_internal和list_directory_recursive_internal
+    /// 统一的StorageEntry构建函数，用于list_dir_internal和list_dir_recursive_internal
     /// 保留必要的时间转换和路径处理，但移除Unix权限格式化
     fn build_storage_entry_detailed(
         entry: &nfs3::entryplus3, dir_path: &str,
@@ -332,7 +475,8 @@ impl NFSStorage {
 
         let storage_entry = crate::StorageEntry {
             name,
-            path: full_path,
+            path: full_path.clone(),
+            relative_path: get_relative_path(&PathBuf::from(full_path), &PathBuf::from(dir_path)),
             is_dir,
             size,
             is_symlink: Some(is_symlink),

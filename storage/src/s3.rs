@@ -1,4 +1,20 @@
 /// S3存储结构（占位符，待实现）
+
+/// 解析S3配置，返回bucket和认证信息
+pub fn parse_s3_config(s3_path: &str) -> Result<(String, String, String, String), String> {
+    let separator_pos = s3_path.find('/').unwrap_or(s3_path.len());
+
+    let bucket = s3_path[..separator_pos].to_string();
+
+    let region = std::env::var("AWS_REGION").unwrap_or_else(|_| "us-east-1".into());
+    let access_key = std::env::var("AWS_ACCESS_KEY_ID")
+        .map_err(|_| "AWS_ACCESS_KEY_ID environment variable not set")?;
+    let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
+        .map_err(|_| "AWS_SECRET_ACCESS_KEY environment variable not set")?;
+
+    Ok((bucket, region, access_key, secret_key))
+}
+
 pub struct S3Storage {
     bucket: String,
     region: String,

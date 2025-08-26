@@ -8,6 +8,9 @@ pub struct StorageEntry {
     pub name: String,
     /// 完整路径
     pub path: String,
+
+    pub relative_path: String,
+
     /// 是否为目录
     pub is_dir: bool,
     /// 文件大小（字节）
@@ -30,4 +33,12 @@ impl StorageEntry {
     pub fn to_path_buf(&self) -> PathBuf {
         PathBuf::from(&self.path)
     }
+}
+
+pub fn get_relative_path(target: &PathBuf, base: &PathBuf) -> String {
+    target
+        .strip_prefix(&base)
+        .ok()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap()
 }

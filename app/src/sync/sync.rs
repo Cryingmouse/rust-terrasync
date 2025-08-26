@@ -1,8 +1,10 @@
-use storage::create_storage;
 use crate::scan::{
     FilterExpression, ScanConfig, ScanMessage, ScanParams, parse_expressions, walkdir,
 };
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use storage::Storage;
+use storage::create_storage;
 use tokio::sync::mpsc;
 use utils::error::Result;
 
@@ -60,17 +62,38 @@ pub async fn sync(params: SyncParams) -> Result<()> {
     // 启动walkdir任务（仅生成ScanResults）
     let walkdir_handle = tokio::spawn(async move { walkdir(scan_config, tx).await });
 
-    // 1. 从src_path读取文件内容，写到dest_path里去
-    // 1.1 根据传入的src_path 创建storage
+    // 1 根据传入的src_path 创建storage
     let src_storage = create_storage(&params.src_path)?;
-    // 1.2 根据传入的dest_path 创建storage
+    // 2 根据传入的dest_path 创建storage
     let dest_storage = create_storage(&params.dest_path)?;
 
     loop {
         match rx.recv().await {
-            Some(ScanMessage::Result(_result)) => {
-                // 2. 将_result写入CH数据库
-                // 3. broadcast _result 给消费者
+            Some(ScanMessage::Result(entity)) => {
+                if src_storage.is_local() && dest_storage.is_local() {
+                    if !entity.relative_path.is_empty() && !entity.is_dir {
+                        let dest_path =
+                            format!("{}/{}", dest_storage.get_root(), entity.relative_path);
+                        let dest_path = PathBuf::from(dest_path);
+                        if let Some(parent_dir) = dest_path.parent() {
+                            if let Err(e) = tokio::fs::create_dir_all(parent_dir).await {
+                                eprintln!("Failed to create directory: {}", e);
+                                continue;
+                            }
+                        }
+
+                        if let Err(e) = tokio::fs::copy(&entity.file_path, &dest_path).await {
+                            eprintln!("Failed to copy file: {}", e);
+                        }
+                    };
+                } else {
+                }
+                // 3. 从src_storage读取文件内容
+                // 4 写入dest_storage
+                // 5. 将_result写入CH数据库
+                // 6. broadcast _result 给消费者
+
+                // 检查是否都是本地文件存储
             }
             Some(ScanMessage::Complete) => {
                 break;
