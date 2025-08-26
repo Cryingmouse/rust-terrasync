@@ -26,7 +26,6 @@ impl Consumer for DatabaseConsumer {
             loop {
                 match receiver.recv().await {
                     Ok(ScanMessage::Result(entity)) => {
-                        println!("Entity is: {:?}", entity);
                         let actual_batch_size = batch_size.unwrap_or(400_000) as usize;
                         if let Some(db) = &database {
                             // Convert SystemTime to u64 timestamp
