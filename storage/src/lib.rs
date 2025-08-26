@@ -232,7 +232,7 @@ fn resolve_local_path(path: &str) -> Result<String, String> {
 /// 存储操作trait
 #[async_trait::async_trait]
 pub trait Storage {
-    async fn list_files(&self, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
+    async fn list_dir(&self, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>>;
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>>;
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), Box<dyn std::error::Error>>;
 
@@ -245,10 +245,10 @@ pub trait Storage {
 // 为StorageType实现统一的接口
 #[async_trait::async_trait]
 impl Storage for StorageType {
-    async fn list_files(&self, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    async fn list_dir(&self, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
         match self {
-            StorageType::Local(storage) => list_local_files(storage.get_root(), path).await,
-            StorageType::NFS(storage) => list_nfs_files(storage, path).await,
+            StorageType::Local(storage) => list_local_dir(storage.get_root(), path).await,
+            StorageType::NFS(storage) => list_nfs_dir(storage, path).await,
             StorageType::S3(_storage) => Ok(Vec::new()),
         }
     }
@@ -282,9 +282,7 @@ impl Storage for StorageType {
 
 /// 本地文件操作：列出文件
 #[inline]
-async fn list_local_files(
-    root: &str, path: &str,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+async fn list_local_dir(root: &str, path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let full_path = PathBuf::from(root).join(path);
 
     if !full_path.is_dir() {
@@ -303,11 +301,11 @@ async fn list_local_files(
 
 /// NFS文件操作：列出文件
 #[inline]
-async fn list_nfs_files(
+async fn list_nfs_dir(
     storage: &NFSStorage, path: &str,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut files = Vec::new();
-    let mut rx = storage.list_directory(path).await?;
+    let mut rx = storage.list_dir(path).await?;
 
     while let Some(entry) = rx.recv().await {
         files.push(entry.path);

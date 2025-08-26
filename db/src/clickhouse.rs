@@ -22,14 +22,14 @@ const FILE_SCAN_COLUMNS_DEFINITION: &str = r#"
     path String,
     size UInt64,
     ext Nullable(String),
-    ctime UInt64,
-    mtime UInt64,
-    atime UInt64,
-    perm UInt32,
+    ctime DateTime64(3),
+    mtime DateTime64(3),
+    atime DateTime64(3),
+    perm Nullable(String),
     is_symlink UInt8,
     is_dir UInt8,
     is_regular_file UInt8,
-    file_handle Nullable(String),
+    hard_links UInt8,
     current_state UInt8
 "#;
 

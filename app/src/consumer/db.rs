@@ -26,44 +26,26 @@ impl Consumer for DatabaseConsumer {
             loop {
                 match receiver.recv().await {
                     Ok(ScanMessage::Result(entity)) => {
+                        println!("Entity is: {:?}", entity);
                         let actual_batch_size = batch_size.unwrap_or(400_000) as usize;
                         if let Some(db) = &database {
                             // Convert SystemTime to u64 timestamp
-                            let ctime = entity
-                                .ctime
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
-                            let mtime = entity
-                                .mtime
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
-                            let atime = entity
-                                .atime
-                                .duration_since(SystemTime::UNIX_EPOCH)
-                                .map(|d| d.as_secs())
-                                .unwrap_or(0);
-
-                            // Convert permissions string to u32
-                            let perm = entity
-                                .permissions
-                                .as_ref()
-                                .and_then(|p| u32::from_str_radix(p, 8).ok())
-                                .unwrap_or(0);
+                            let ctime = entity.ctime;
+                            let mtime = entity.mtime;
+                            let atime = entity.atime;
 
                             let record = FileScanRecord {
                                 path: entity.file_path,
                                 size: entity.size,
                                 ext: entity.extension,
-                                ctime,
-                                mtime,
-                                atime,
-                                perm,
+                                ctime: ctime.unwrap_or_default(),
+                                mtime: mtime.unwrap_or_default(),
+                                atime: atime.unwrap_or_default(),
+                                perm: entity.permissions,
                                 is_symlink: entity.is_symlink,
                                 is_dir: entity.is_dir,
                                 is_regular_file: !entity.is_dir,
-                                file_handle: None,
+                                hard_links: entity.hard_links.unwrap_or_default(),
                                 current_state: 0,
                             };
                             current_batch.push(record);
@@ -79,6 +61,10 @@ impl Consumer for DatabaseConsumer {
                                 tokio::spawn(async move {
                                     log::info!(
                                         "[DatabaseConsumer] Inserting batch of {} records",
+                                        batch_to_insert.len()
+                                    );
+                                    println!(
+                                        "length of batch to insert: {:?}",
                                         batch_to_insert.len()
                                     );
                                     if let Err(e) = db_clone

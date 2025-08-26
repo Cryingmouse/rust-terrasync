@@ -1,5 +1,7 @@
 mod filter;
-mod scan;
+pub mod scan;
 
-pub use filter::{evaluate_filter, parse_filter_expression, FilterCondition, FilterExpression};
-pub use scan::{scan, walkdir, ScanConfig, ScanMessage, ScanParams, ScanType, StorageEntity};
+pub use filter::{FilterCondition, FilterExpression, evaluate_filter, parse_filter_expression};
+pub use scan::{
+    ScanConfig, ScanMessage, ScanParams, ScanType, StorageEntity, parse_expressions, scan, walkdir,
+};

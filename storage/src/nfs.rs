@@ -1,16 +1,15 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::time::{Duration, UNIX_EPOCH};
 
 use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 
+use nfs3_client::Nfs3ConnectionBuilder;
 use nfs3_client::nfs3_types::nfs3::{self, Nfs3Option};
 use nfs3_client::nfs3_types::portmap::PMAP_PORT;
 use nfs3_client::nfs3_types::rpc::{auth_unix, opaque_auth};
 use nfs3_client::nfs3_types::xdr_codec::Opaque;
 use nfs3_client::tokio::TokioConnector;
-use nfs3_client::Nfs3ConnectionBuilder;
 
 // 类型别名，简化复杂类型
 pub type NfsConnection =
@@ -45,7 +44,7 @@ impl NFSStorage {
         }
     }
 
-    pub async fn list_directory(
+    pub async fn list_dir(
         &self, dir_path: &str,
     ) -> NfsResult<mpsc::UnboundedReceiver<crate::StorageEntry>> {
         let (tx, rx) = mpsc::unbounded_channel();
@@ -120,7 +119,7 @@ impl NFSStorage {
     }
 
     pub async fn list_root(&self) -> NfsResult<mpsc::UnboundedReceiver<crate::StorageEntry>> {
-        self.list_directory("/").await
+        self.list_dir("/").await
     }
 
     pub async fn walkdir(
@@ -257,6 +256,17 @@ impl NFSStorage {
         self.path.as_deref()
     }
 
+    fn to_nanos_checked(seconds: u32, nseconds: u32) -> Option<i64> {
+        // 1. 先将 seconds 安全地转换为 i64
+        let secs_i64: i64 = seconds.into();
+
+        // 2. 计算 seconds 代表的纳秒数，检查乘法溢出
+        let secs_as_nanos = secs_i64.checked_mul(1_000_000_000)?;
+
+        // 3. 加上 nseconds，检查加法溢出
+        secs_as_nanos.checked_add(nseconds.into())
+    }
+
     /// 统一的StorageEntry构建函数，用于list_directory_internal和list_directory_recursive_internal
     /// 保留必要的时间转换和路径处理，但移除Unix权限格式化
     fn build_storage_entry_detailed(
@@ -278,31 +288,22 @@ impl NFSStorage {
             let is_dir = matches!(file_type, nfs3::ftype3::NF3DIR);
             let is_symlink = matches!(file_type, nfs3::ftype3::NF3LNK);
 
+            // 创建时间 (ctime)
+            let ctime = &attrs.ctime;
+            let created_time = Self::to_nanos_checked(ctime.seconds, ctime.nseconds);
+
             // 修改时间 (mtime)
             let mtime = &attrs.mtime;
-            let modified_duration = Duration::new(u64::from(mtime.seconds), mtime.nseconds);
-            let modified_time = UNIX_EPOCH
-                .checked_add(modified_duration)
-                .unwrap_or(UNIX_EPOCH);
+            let modified_time = Self::to_nanos_checked(mtime.seconds, mtime.nseconds);
 
             // 访问时间 (atime)
             let atime = &attrs.atime;
-            let accessed_duration = Duration::new(u64::from(atime.seconds), atime.nseconds);
-            let accessed_time = UNIX_EPOCH
-                .checked_add(accessed_duration)
-                .unwrap_or(UNIX_EPOCH);
-
-            // 创建/状态变更时间 (ctime)
-            let ctime = &attrs.ctime;
-            let created_duration = Duration::new(u64::from(ctime.seconds), ctime.nseconds);
-            let created_time = UNIX_EPOCH
-                .checked_add(created_duration)
-                .unwrap_or(UNIX_EPOCH);
+            let accessed_time = Self::to_nanos_checked(atime.seconds, atime.nseconds);
 
             // 解析mode字段 - Unix文件权限原始值
             let mode = attrs.mode;
             // 硬链接数
-            let hard_links = attrs.nlink as u64;
+            let hard_links = attrs.nlink as u8;
 
             (
                 is_dir,
@@ -315,9 +316,7 @@ impl NFSStorage {
                 hard_links,
             )
         } else {
-            (
-                false, false, 0, UNIX_EPOCH, UNIX_EPOCH, UNIX_EPOCH, 0o644, 1,
-            )
+            (false, false, 0, Some(0), Some(0), Some(0), 0o644, 1)
         };
 
         let nfs_fh3 = match &entry.name_handle {
@@ -336,10 +335,10 @@ impl NFSStorage {
             path: full_path,
             is_dir,
             size,
-            modified: modified_time,
             is_symlink: Some(is_symlink),
-            accessed: Some(accessed_time),
-            created: Some(created_time),
+            created: created_time,
+            modified: modified_time,
+            accessed: accessed_time,
             nfs_fh3: Some(nfs_fh3),
             // Unix权限原始值，格式化移至消费者循环
             mode: Some(mode),

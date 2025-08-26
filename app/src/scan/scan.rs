@@ -6,6 +6,8 @@ use tokio::sync::mpsc;
 use tokio::time;
 use utils::app_config::AppConfig;
 
+use std::time::UNIX_EPOCH;
+
 /// 将Unix权限位格式化为 rwxrwxrwx 字符串
 fn format_permissions(mode: u32) -> String {
     let mut perms = String::with_capacity(9);
@@ -27,7 +29,7 @@ use crate::consumer::ConsumerManager;
 use crate::scan::filter::{FilterExpression, evaluate_filter, parse_filter_expression};
 
 /// 辅助函数：解析表达式列表
-fn parse_expressions(expressions: &[String]) -> Result<Vec<FilterExpression>> {
+pub fn parse_expressions(expressions: &[String]) -> Result<Vec<FilterExpression>> {
     expressions
         .iter()
         .map(|expr| {
@@ -183,12 +185,12 @@ pub struct StorageEntity {
     pub is_dir: bool,
     pub is_symlink: bool,
     pub size: u64,
-    pub atime: SystemTime,
-    pub ctime: SystemTime,
-    pub mtime: SystemTime,
+    pub atime: Option<i64>,
+    pub ctime: Option<i64>,
+    pub mtime: Option<i64>,
     pub mode: Option<u32>,
     pub permissions: Option<String>,
-    pub hard_links: Option<u64>,
+    pub hard_links: Option<u8>,
 }
 
 /// 扫描消息枚举 - 用于队列通信的消息类型
@@ -322,8 +324,8 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
         let size = entry.size;
 
         // 获取文件时间信息
-        let atime = entry.accessed.unwrap_or(SystemTime::UNIX_EPOCH);
-        let ctime = entry.created.unwrap_or(SystemTime::UNIX_EPOCH);
+        let atime = entry.accessed;
+        let ctime = entry.created;
         let mtime = entry.modified;
 
         // 格式化Unix权限
@@ -331,10 +333,12 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
 
         // 计算修改时间（天数）
         let modified_days = {
-            let now = SystemTime::now();
-            now.duration_since(mtime)
-                .map(|duration| duration.as_secs_f64() / 86400.0)
-                .unwrap_or(0.0)
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64)
+                .unwrap_or(0);
+            let diff_ms = now.checked_sub(mtime.unwrap_or(0)).unwrap_or(0);
+            diff_ms as f64 / 86400000.0
         };
 
         // 获取文件扩展名

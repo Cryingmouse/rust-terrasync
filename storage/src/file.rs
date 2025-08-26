@@ -3,7 +3,7 @@ use std::fs::Metadata;
 use std::io;
 use std::io::SeekFrom;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -194,30 +194,52 @@ impl LocalStorage {
             }
 
             for entry in walker.into_iter().filter_map(|e| e.ok()) {
-                let path = entry.path().to_path_buf();
+                let path_buf = PathBuf::from(entry.path());
+
+                let name = path_buf
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(); // 转换为String
+
+                let path = path_buf.to_string_lossy().into_owned(); // 转换为String
 
                 if let Ok(info) = entry.metadata() {
-                    let name = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-
                     #[cfg(unix)]
                     let hard_links = info.nlink() as u64;
-
-                    #[cfg(not(unix))]
+                    #[cfg(windows)]
                     let hard_links = 1;
 
                     let storage_entry = crate::StorageEntry {
                         name,
-                        path: path.to_string_lossy().to_string(),
+                        path: path,
                         is_dir: info.is_dir(),
                         size: info.len(),
-                        modified: info.modified().unwrap_or(SystemTime::UNIX_EPOCH),
                         is_symlink: Some(info.file_type().is_symlink()),
-                        accessed: info.accessed().ok(),
-                        created: info.created().ok(),
+                        modified: info
+                            .modified()
+                            .unwrap_or(UNIX_EPOCH)
+                            .duration_since(UNIX_EPOCH)
+                            .ok()
+                            .map(|duration| {
+                                duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64
+                            }),
+                        accessed: info
+                            .accessed()
+                            .unwrap_or(UNIX_EPOCH)
+                            .duration_since(UNIX_EPOCH)
+                            .ok()
+                            .map(|duration| {
+                                duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64
+                            }),
+                        created: info
+                            .created()
+                            .unwrap_or(UNIX_EPOCH)
+                            .duration_since(UNIX_EPOCH)
+                            .ok()
+                            .map(|duration| {
+                                duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64
+                            }),
                         nfs_fh3: None,
                         mode: {
                             #[cfg(unix)]

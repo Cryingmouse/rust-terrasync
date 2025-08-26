@@ -18,13 +18,29 @@ pub struct Cli {
 pub enum Commands {
     /// Run the sync operation
     Sync {
-        /// Enable verbose logging
+        /// Scan ID for tracking
         #[arg(short, long)]
-        verbose: bool,
+        id: Option<String>,
 
-        /// Configuration file path
-        #[arg(short, long)]
-        config: Option<String>,
+        /// Directory path to scan
+        src_path: String,
+
+        /// Directory path to scan
+        dest_path: String,
+
+        /// Checksum the files (also save the checksum files when indexing)
+        #[arg(long, default_value_t = false)]
+        enable_md5: bool,
+
+        /// Filter expression to match files/directories
+        /// Examples: 'modified<0.5 and "ntap" in name and type==file'
+        #[arg(short, long, value_name = "EXPRESSION")]
+        r#match: Vec<String>,
+
+        /// Filter expression to exclude files/directories
+        /// Examples: 'name=="target" or name==".git"'
+        #[arg(short, long, value_name = "EXPRESSION")]
+        exclude: Vec<String>,
     },
 
     /// Run the scan operation
@@ -38,7 +54,6 @@ pub enum Commands {
         depth: u32,
 
         /// Directory path to scan
-        #[arg(default_value = ".")]
         path: String,
 
         /// Filter expression to match files/directories
@@ -85,8 +100,24 @@ pub async fn cli_match() -> utils::error::Result<()> {
             )
             .await?
         }
-        Commands::Sync { verbose, config } => commands::sync_cmd(*verbose, config.clone()).await?,
+        Commands::Sync {
+            id,
+            src_path,
+            dest_path,
+            enable_md5,
+            r#match,
+            exclude,
+        } => {
+            commands::sync_cmd(
+                id.clone(),
+                src_path.clone(),
+                dest_path.clone(),
+                enable_md5.clone(),
+                r#match.clone(),
+                exclude.clone(),
+            )
+            .await?
+        }
     }
-
     Ok(())
 }
