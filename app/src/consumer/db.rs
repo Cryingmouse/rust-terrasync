@@ -61,10 +61,6 @@ impl Consumer for DatabaseConsumer {
                                         "[DatabaseConsumer] Inserting batch of {} records",
                                         batch_to_insert.len()
                                     );
-                                    println!(
-                                        "length of batch to insert: {:?}",
-                                        batch_to_insert.len()
-                                    );
                                     if let Err(e) = db_clone
                                         .batch_insert_base_record_async(batch_to_insert)
                                         .await

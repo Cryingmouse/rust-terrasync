@@ -286,8 +286,6 @@ pub async fn scan(params: ScanParams) -> Result<()> {
     // 关闭消费者管理器
     consumer_manager.shutdown().await?;
 
-    // Stats are now calculated and displayed by ConsoleConsumer
-
     Ok(())
 }
 

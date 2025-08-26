@@ -146,7 +146,7 @@ impl LocalStorage {
 
                 if let Ok(info) = entry.metadata() {
                     #[cfg(unix)]
-                    let hard_links = info.nlink() as u64;
+                    let hard_links = info.nlink() as u8;
                     #[cfg(windows)]
                     let hard_links = 1;
 
