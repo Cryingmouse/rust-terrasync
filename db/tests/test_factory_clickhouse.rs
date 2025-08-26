@@ -132,7 +132,6 @@ mod tests {
     /// 从factory层面验证Database的所有接口
     #[tokio::test]
     async fn test_all_database_interfaces_via_factory() {
-        use db::traits::FileScanRecord;
         use db::{SCAN_BASE_TABLE_BASE_NAME, SCAN_STATE_TABLE_BASE_NAME};
 
         let job_id = generate_unique_job_id("factory_all_interfaces");

@@ -345,12 +345,12 @@ mod tests {
                 ctime: base_time,
                 mtime: base_time,
                 atime: base_time,
-                perm: 0o644,
+                perm: Some(String::from("rw-r--r--")),
                 is_symlink: false,
                 is_dir: false,
                 is_regular_file: true,
-                file_handle: Some("handle123".to_string()),
                 current_state: 1,
+                hard_links: 1,
             },
             FileScanRecord {
                 path: "/test/path/file2.jpg".to_string(),
@@ -359,12 +359,12 @@ mod tests {
                 ctime: base_time,
                 mtime: base_time,
                 atime: base_time,
-                perm: 0o644,
+                perm: Some(String::from("rw-r--r--")),
                 is_symlink: false,
                 is_dir: false,
                 is_regular_file: true,
-                file_handle: Some("handle123".to_string()),
                 current_state: 1,
+                hard_links: 2,
             },
         ];
 
@@ -441,11 +441,11 @@ mod tests {
                 ctime: base_time,
                 mtime: base_time,
                 atime: base_time,
-                perm: 0o644,
+                perm: Some(String::from("rw-r--r--")),
+                hard_links: 1,
                 is_symlink: false,
                 is_dir: false,
                 is_regular_file: true,
-                file_handle: Some(format!("handle_{}", i)),
                 current_state: 1,
             });
         }
