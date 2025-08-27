@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::future::Future;
 use std::pin::Pin;
 
+use std::time::SystemTime;
 use tokio::sync::mpsc;
 
 use nfs3_client::Nfs3ConnectionBuilder;
@@ -13,6 +14,7 @@ use nfs3_client::nfs3_types::xdr_codec::Opaque;
 use nfs3_client::tokio::TokioConnector;
 
 use crate::common::get_relative_path;
+use crate::seconds_nanos_to_systemtime;
 
 // 类型别名，简化复杂类型
 pub type NfsConnection =
@@ -167,6 +169,42 @@ fn parse_server_and_port(server_part: &str) -> (String, u16) {
         (server.to_string(), port)
     } else {
         (server_part.to_string(), PMAP_PORT)
+    }
+}
+
+pub fn from_secs_nsecs_to_nsecs(seconds: u32, nseconds: u32) -> Option<i64> {
+    // 1. 先将 seconds 安全地转换为 i64
+    let secs_i64: i64 = seconds.into();
+
+    // 2. 计算 seconds 代表的纳秒数，检查乘法溢出
+    let secs_as_nanos = secs_i64.checked_mul(1_000_000_000)?;
+
+    // 3. 加上 nseconds，检查加法溢出
+    secs_as_nanos.checked_add(nseconds.into())
+}
+
+/// 将纳秒数(i64)转换回秒和纳秒
+///
+/// # Arguments
+/// * `nanos` - 纳秒数
+///
+/// # Returns
+/// 成功时返回(seconds, nseconds)元组，失败时返回None
+pub fn from_nanos_to_secs_nsecs(nanos: i64) -> Option<(u32, u32)> {
+    // 检查纳秒数是否为负数
+    if nanos < 0 {
+        return None;
+    }
+
+    // 计算秒数：纳秒数除以1_000_000_000
+    let seconds = nanos / 1_000_000_000;
+    // 计算剩余纳秒数：纳秒数对1_000_000_000取模
+    let remaining_nanos = nanos % 1_000_000_000;
+
+    // 安全地将结果转换为u32类型
+    match (seconds.try_into().ok(), remaining_nanos.try_into().ok()) {
+        (Some(secs), Some(nsecs)) => Some((secs, nsecs)),
+        _ => None,
     }
 }
 
@@ -399,17 +437,6 @@ impl NFSStorage {
         self.path.as_deref()
     }
 
-    fn to_nanos_checked(seconds: u32, nseconds: u32) -> Option<i64> {
-        // 1. 先将 seconds 安全地转换为 i64
-        let secs_i64: i64 = seconds.into();
-
-        // 2. 计算 seconds 代表的纳秒数，检查乘法溢出
-        let secs_as_nanos = secs_i64.checked_mul(1_000_000_000)?;
-
-        // 3. 加上 nseconds，检查加法溢出
-        secs_as_nanos.checked_add(nseconds.into())
-    }
-
     /// 统一的StorageEntry构建函数，用于list_dir_internal和list_dir_recursive_internal
     /// 保留必要的时间转换和路径处理，但移除Unix权限格式化
     fn build_storage_entry_detailed(
@@ -433,15 +460,15 @@ impl NFSStorage {
 
             // 创建时间 (ctime)
             let ctime = &attrs.ctime;
-            let created_time = Self::to_nanos_checked(ctime.seconds, ctime.nseconds);
+            let created_time = seconds_nanos_to_systemtime(ctime.seconds, ctime.nseconds);
 
             // 修改时间 (mtime)
             let mtime = &attrs.mtime;
-            let modified_time = Self::to_nanos_checked(mtime.seconds, mtime.nseconds);
+            let modified_time = seconds_nanos_to_systemtime(mtime.seconds, mtime.nseconds);
 
             // 访问时间 (atime)
             let atime = &attrs.atime;
-            let accessed_time = Self::to_nanos_checked(atime.seconds, atime.nseconds);
+            let accessed_time = seconds_nanos_to_systemtime(atime.seconds, atime.nseconds);
 
             // 解析mode字段 - Unix文件权限原始值
             let mode = attrs.mode;
@@ -459,7 +486,16 @@ impl NFSStorage {
                 hard_links,
             )
         } else {
-            (false, false, 0, Some(0), Some(0), Some(0), 0o644, 1)
+            (
+                false,
+                false,
+                0,
+                SystemTime::UNIX_EPOCH,
+                SystemTime::UNIX_EPOCH,
+                SystemTime::UNIX_EPOCH,
+                0o644,
+                1,
+            )
         };
 
         let nfs_fh3 = match &entry.name_handle {

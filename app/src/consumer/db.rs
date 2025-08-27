@@ -5,6 +5,7 @@ use db::factory::create_database;
 use db::traits::Database;
 use db::traits::FileScanRecord;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 use tokio::sync::broadcast;
 use utils::error::Result;
 
@@ -36,9 +37,30 @@ impl Consumer for DatabaseConsumer {
                                 path: entity.file_path,
                                 size: entity.size,
                                 ext: entity.extension,
-                                ctime: ctime.unwrap_or_default(),
-                                mtime: mtime.unwrap_or_default(),
-                                atime: atime.unwrap_or_default(),
+                                atime: atime
+                                    .duration_since(UNIX_EPOCH)
+                                    .ok()
+                                    .map(|duration| {
+                                        duration.as_secs() as i64 * 1000
+                                            + duration.subsec_millis() as i64
+                                    })
+                                    .unwrap(),
+                                ctime: ctime
+                                    .duration_since(UNIX_EPOCH)
+                                    .ok()
+                                    .map(|duration| {
+                                        duration.as_secs() as i64 * 1000
+                                            + duration.subsec_millis() as i64
+                                    })
+                                    .unwrap(),
+                                mtime: mtime
+                                    .duration_since(UNIX_EPOCH)
+                                    .ok()
+                                    .map(|duration| {
+                                        duration.as_secs() as i64 * 1000
+                                            + duration.subsec_millis() as i64
+                                    })
+                                    .unwrap(),
                                 perm: entity.permissions,
                                 is_symlink: entity.is_symlink,
                                 is_dir: entity.is_dir,

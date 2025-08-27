@@ -157,30 +157,9 @@ impl LocalStorage {
                         is_dir: info.is_dir(),
                         size: info.len(),
                         is_symlink: Some(info.file_type().is_symlink()),
-                        modified: info
-                            .modified()
-                            .unwrap_or(UNIX_EPOCH)
-                            .duration_since(UNIX_EPOCH)
-                            .ok()
-                            .map(|duration| {
-                                duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64
-                            }),
-                        accessed: info
-                            .accessed()
-                            .unwrap_or(UNIX_EPOCH)
-                            .duration_since(UNIX_EPOCH)
-                            .ok()
-                            .map(|duration| {
-                                duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64
-                            }),
-                        created: info
-                            .created()
-                            .unwrap_or(UNIX_EPOCH)
-                            .duration_since(UNIX_EPOCH)
-                            .ok()
-                            .map(|duration| {
-                                duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64
-                            }),
+                        modified: info.modified().unwrap_or(UNIX_EPOCH),
+                        accessed: info.accessed().unwrap_or(UNIX_EPOCH),
+                        created: info.created().unwrap_or(UNIX_EPOCH),
                         nfs_fh3: None,
                         mode: {
                             #[cfg(unix)]

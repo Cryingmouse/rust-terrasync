@@ -9,6 +9,7 @@ use std::time::Duration;
 use std::time::Instant;
 use storage::Storage;
 use storage::create_storage;
+use storage::systemtime_to_seconds_nanos;
 use tokio::sync::mpsc;
 use tokio::time;
 use utils::app_config::AppConfig;
@@ -127,6 +128,20 @@ pub async fn sync(params: SyncParams) -> Result<()> {
                         if let Err(e) = tokio::fs::copy(&entity.file_path, &dest_path).await {
                             eprintln!("Failed to copy file: {}", e);
                         }
+
+                        tokio::task::spawn_blocking(move || {
+                            // 使用标准库的 set_file_times 函数（注意：此函数在 std::fs 中实际并不存在，仅为示例逻辑）
+                            // 实际标准库中需要通过 File::set_times 或其他方式，但标准库当前（Rust 1.xx）并未提供直接设置 mtime 的函数。
+                            // 更常见的做法是使用第三方库，如 `filetime`。
+                            let (secs, nsecs) = systemtime_to_seconds_nanos(entity.mtime);
+                            filetime::set_file_mtime(
+                                &dest_path,
+                                filetime::FileTime::from_unix_time(secs, nsecs),
+                            )
+                            .expect("Failed to set mtime");
+                        })
+                        .await
+                        .expect("spawn_blocking task failed");
                         total_files += 1;
                     };
                     // 每10秒打印一次进度

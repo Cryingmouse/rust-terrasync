@@ -6,8 +6,6 @@ use tokio::sync::mpsc;
 use tokio::time;
 use utils::app_config::AppConfig;
 
-use std::time::UNIX_EPOCH;
-
 /// 将Unix权限位格式化为 rwxrwxrwx 字符串
 fn format_permissions(mode: u32) -> String {
     let mut perms = String::with_capacity(9);
@@ -186,9 +184,9 @@ pub struct StorageEntity {
     pub is_dir: bool,
     pub is_symlink: bool,
     pub size: u64,
-    pub atime: Option<i64>,
-    pub ctime: Option<i64>,
-    pub mtime: Option<i64>,
+    pub atime: SystemTime,
+    pub ctime: SystemTime,
+    pub mtime: SystemTime,
     pub mode: Option<u32>,
     pub permissions: Option<String>,
     pub hard_links: Option<u8>,
@@ -201,6 +199,27 @@ pub enum ScanMessage {
     Complete,
     /// 扫描配置信息
     Config(ConsumerConfig),
+}
+
+/// 返回 time 相对于 now 的天数差，正数表示 time 晚于 now，负数表示 time 早于 now
+fn days_between(now: SystemTime, time: SystemTime) -> f64 {
+    // 计算两个时间点之间的持续时间
+    let duration = if now <= time {
+        time.duration_since(now).unwrap_or(Duration::ZERO)
+    } else {
+        now.duration_since(time).unwrap_or(Duration::ZERO)
+    };
+
+    // 将持续时间转换为天数（f64）
+    let seconds = duration.as_secs() as f64;
+    let nanoseconds = duration.subsec_nanos() as f64;
+    let total_seconds = seconds + nanoseconds / 1_000_000_000.0;
+
+    // 计算天数（一天 = 86400 秒）
+    let days = total_seconds / 86400.0;
+
+    // 根据时间顺序调整符号
+    if now <= time { days } else { -days }
 }
 
 /// 主扫描函数 - 入口点
@@ -249,9 +268,9 @@ pub async fn scan(params: ScanParams) -> Result<()> {
 
     loop {
         match rx.recv().await {
-            Some(ScanMessage::Result(result)) => {
+            Some(ScanMessage::Result(entity)) => {
                 // 广播扫描结果给所有消费者
-                if let Err(e) = broadcaster.send(ScanMessage::Result(result.clone())) {
+                if let Err(e) = broadcaster.send(ScanMessage::Result(entity.clone())) {
                     log::error!("Failed to broadcast scan result: {}", e);
                 }
             }
@@ -329,11 +348,8 @@ pub async fn walkdir(config: ScanConfig, tx: mpsc::Sender<ScanMessage>) -> Resul
 
         // 计算修改时间（天数）
         let modified_days = {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|duration| duration.as_secs() as i64 * 1000 + duration.subsec_millis() as i64)
-                .unwrap_or(0);
-            let diff_ms = now.checked_sub(mtime.unwrap_or(0)).unwrap_or(0);
+            let now = SystemTime::now();
+            let diff_ms = days_between(now, mtime);
             diff_ms as f64 / 86400000.0
         };
 
